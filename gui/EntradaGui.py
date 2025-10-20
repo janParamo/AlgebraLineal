@@ -92,7 +92,6 @@ class EntradaGui(QWidget):
                 border-radius: 18px;
                 border: 2px solid #1e6091;
                 padding: 18px 60px;
-                transition: all 0.3s ease;
             }
             QPushButton:hover {
                 background-color: #184e77;

@@ -5,12 +5,29 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from typing import List
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QListWidget, QMessageBox, QGridLayout, QTextEdit, QGroupBox, QSizePolicy, QInputDialog
+    QLineEdit, QListWidget, QMessageBox, QGridLayout, QTextEdit, QGroupBox, QSizePolicy, QInputDialog, QComboBox
 )
 from PyQt6.QtGui import QFont
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, qInstallMessageHandler
+import sys as _sys
 
-from models.Matrices import Matrices
+def _qt_message_handler(mode, context, message):
+    """Manejador personalizado para mensajes de Qt que redirige a la salida estándar."""
+    if mode == Qt.MsgType.QtDebugMsg:
+        _sys.stdout.write(f"DEBUG: {message}\n")
+    elif mode == Qt.MsgType.QtInfoMsg:
+        _sys.stdout.write(f"INFO: {message}\n")
+    elif mode == Qt.MsgType.QtWarningMsg:
+        _sys.stdout.write(f"WARNING: {message}\n")
+    elif mode == Qt.MsgType.QtCriticalMsg:
+        _sys.stdout.write(f"CRITICAL: {message}\n")
+    elif mode == Qt.MsgType.QtFatalMsg:
+        _sys.stdout.write(f"FATAL: {message}\n")
+        _sys.exit(1)
+# instalar el manejador antes de crear widgets
+qInstallMessageHandler(_qt_message_handler)
+
+from models.Matrices import Matrices, format_val
 from models.Vectores import load_saved_vectors, save_vector, delete_saved_vector
 
 
@@ -68,7 +85,8 @@ class OperacionesMatricesGui(QWidget):
         self.cols_input = QLineEdit()
         self.cols_input.setFixedWidth(80)
         form.addWidget(self.cols_input, 2, 1)
-        self.btn_generate = QPushButton("Generar campos")
+        self.btn_generate = QPushButton("🧩 Generar campos")
+        self.btn_generate.setToolTip("Generar los campos de entrada para la matriz (filas x columnas)")
         self.btn_generate.clicked.connect(self.generate_fields)
         form.addWidget(self.btn_generate, 3, 0, 1, 2)
 
@@ -85,16 +103,21 @@ class OperacionesMatricesGui(QWidget):
         acciones_group = QGroupBox("Acciones")
         acciones_layout = QHBoxLayout()
         acciones_group.setLayout(acciones_layout)
-        self.btn_save = QPushButton("Guardar matriz")
+        # añadir icono de guardado (emoji para compatibilidad cross-platform)
+        self.btn_save = QPushButton("💾 Guardar matriz")
+        self.btn_save.setToolTip("Guardar la matriz actual")
         self.btn_save.clicked.connect(self.save_matrix)
         acciones_layout.addWidget(self.btn_save)
-        self.btn_show = QPushButton("Mostrar seleccionada")
+        self.btn_show = QPushButton("👁️ Mostrar seleccionada")
+        self.btn_show.setToolTip("Mostrar la matriz seleccionada en el panel de resultados")
         self.btn_show.clicked.connect(self.show_selected)
         acciones_layout.addWidget(self.btn_show)
-        self.btn_transpose = QPushButton("Transponer seleccionada")
+        self.btn_transpose = QPushButton("🔁 Transponer seleccionada")
+        self.btn_transpose.setToolTip("Calcular y (opcionalmente) guardar la transpuesta de la matriz seleccionada")
         self.btn_transpose.clicked.connect(self.transpose_selected)
         acciones_layout.addWidget(self.btn_transpose)
-        self.btn_delete = QPushButton("Eliminar seleccionada")
+        self.btn_delete = QPushButton("🗑️ Eliminar seleccionados")
+        self.btn_delete.setToolTip("Eliminar las matrices seleccionadas")
         self.btn_delete.clicked.connect(self.delete_selected)
         acciones_layout.addWidget(self.btn_delete)
         layout.addWidget(acciones_group)
@@ -107,15 +130,27 @@ class OperacionesMatricesGui(QWidget):
         left = QVBoxLayout()
         left.addWidget(QLabel("Matrices guardadas:"))
         self.list_widget = QListWidget()
+        # permitir selección múltiple de matrices para eliminación
+        self.list_widget.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         self.list_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         left.addWidget(self.list_widget)
+        # Permitir selección con Ctrl+click derecho
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # conectar la señal al manejador que alterna selección en clic derecho
+        self.list_widget.customContextMenuRequested.connect(self._toggle_list_item_at_pos)
         # lista de vectores guardados
         left.addWidget(QLabel("Vectores guardados:"))
         self.vectors_list = QListWidget()
         self.vectors_list.setFixedWidth(200)
+        # permitir selección múltiple de vectores
+        self.vectors_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        # permitir toggle de selección con clic derecho
+        self.vectors_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.vectors_list.customContextMenuRequested.connect(self._toggle_vector_item_at_pos)
         left.addWidget(self.vectors_list)
         # boton para eliminar vector seleccionado
-        self.btn_delete_vector = QPushButton("Eliminar vector")
+        self.btn_delete_vector = QPushButton("🗑️ Eliminar vector")
+        self.btn_delete_vector.setToolTip("Eliminar uno o varios vectores seleccionados")
         self.btn_delete_vector.clicked.connect(self._delete_selected_vector)
         left.addWidget(self.btn_delete_vector)
         panel_layout.addLayout(left, 1)
@@ -131,9 +166,15 @@ class OperacionesMatricesGui(QWidget):
         self.sel_b = QLineEdit()
         self.sel_b.setFixedWidth(120)
         sel_layout.addWidget(self.sel_b)
-        self.btn_mult = QPushButton("Multiplicar A x B")
-        self.btn_mult.clicked.connect(self.multiply_selected)
-        sel_layout.addWidget(self.btn_mult)
+        # Operación: ahora con combo box para elegir Multiplicar / Sumar / Restar
+        self.op_combo = QComboBox()
+        self.op_combo.addItems(["Multiplicar", "Sumar", "Restar"])
+        self.op_combo.setFixedWidth(140)
+        sel_layout.addWidget(self.op_combo)
+        # Botón para ejecutar la operación seleccionada
+        self.btn_execute = QPushButton("Ejecutar")
+        self.btn_execute.clicked.connect(self.operate_selected)
+        sel_layout.addWidget(self.btn_execute)
         right.addLayout(sel_layout)
 
         # segunda fila: controles de vector y escalar para evitar solapamiento
@@ -212,7 +253,11 @@ class OperacionesMatricesGui(QWidget):
             for j, le in enumerate(row):
                 txt = le.text().strip() or '0'
                 try:
-                    val = float(txt)
+                    if '/' in txt:
+                        from fractions import Fraction
+                        val = float(Fraction(txt))
+                    else:
+                        val = float(txt)
                 except Exception:
                     raise ValueError(f"Valor no numérico en fila {i+1}, col {j+1}: '{txt}'")
                 r.append(val)
@@ -279,7 +324,7 @@ class OperacionesMatricesGui(QWidget):
         # mostrar en el cuadro de texto
         txt = f"Matriz '{name}' ({len(mat)}x{len(mat[0]) if mat else 0}):\n"
         for row in mat:
-            txt += "[ " + ", ".join(str(x) for x in row) + " ]\n"
+            txt += "[ " + ", ".join(format_val(x) for x in row) + " ]\n"
         self.result_text.setPlainText(txt)
 
         # opcional: volcar a campos de entrada
@@ -311,7 +356,13 @@ class OperacionesMatricesGui(QWidget):
         if not parts:
             raise ValueError('Vector vacío')
         try:
-            vals = [float(p) for p in parts]
+            vals = []
+            from fractions import Fraction
+            for p in parts:
+                if '/' in p:
+                    vals.append(float(Fraction(p)))
+                else:
+                    vals.append(float(p))
             return vals
         except Exception:
             raise ValueError('Formato de vector inválido. Usa números separados por comas.')
@@ -355,7 +406,7 @@ class OperacionesMatricesGui(QWidget):
             res, pasos = Matrices.multiply_with_steps(a, b)
             # res es n x 1
             pasos.append('Resultado vector columna:')
-            pasos.append('\n'.join(str(row[0]) for row in res))
+            pasos.append('\n'.join(format_val(row[0]) for row in res))
             self.result_text.setPlainText('\n'.join(pasos))
         except Exception as e:
             QMessageBox.critical(self, 'Error al multiplicar', str(e))
@@ -439,7 +490,7 @@ class OperacionesMatricesGui(QWidget):
         try:
             res, pasos = Matrices.multiply_with_steps(a, b)
             pasos.append('Resultado vector columna:')
-            pasos.append('\n'.join(str(row[0]) for row in res))
+            pasos.append('\n'.join(format_val(row[0]) for row in res))
             self.result_text.setPlainText('\n'.join(pasos))
         except Exception as e:
             QMessageBox.critical(self, 'Error al multiplicar', str(e))
@@ -457,6 +508,8 @@ class OperacionesMatricesGui(QWidget):
         mat = saved[name]
         try:
             t, pasos = Matrices.transpose_with_steps(mat)
+            # multiply_with_steps already formats intermediate values via format_val, but ensure final display uses format_val
+            # pasos is already a list of strings; show as-is
             self.result_text.setPlainText("\n".join(pasos))
             reply = QMessageBox.question(self, "Guardar transpuesta", f"¿Guardar transpuesta como '{name}_T'?",
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -491,6 +544,47 @@ class OperacionesMatricesGui(QWidget):
                 self.reload_saved()
         except Exception as e:
             QMessageBox.critical(self, "Error al multiplicar", str(e))
+    def operate_selected(self):
+        """Ejecuta la operación seleccionada en el combo (Multiplicar/Sumar/Restar) sobre A y B guardadas."""
+        op = self.op_combo.currentText()
+        a_name = self.sel_a.text().strip()
+        b_name = self.sel_b.text().strip()
+        if not a_name or not b_name:
+            QMessageBox.warning(self, "Error", "Proporciona ambos nombres A y B.")
+            return
+        saved = Matrices.load_saved_matrices()
+        if a_name not in saved:
+            QMessageBox.warning(self, "Error", f"No existe la matriz A: {a_name}")
+            return
+        if b_name not in saved:
+            QMessageBox.warning(self, "Error", f"No existe la matriz B: {b_name}")
+            return
+        a = saved[a_name]
+        b = saved[b_name]
+        try:
+            if op == "Multiplicar":
+                res, pasos = Matrices.multiply_with_steps(a, b)
+                self.result_text.setPlainText("\n".join(pasos))
+                default_name = f"{a_name}_x_{b_name}"
+            elif op == "Sumar":
+                res = Matrices.add(a, b)
+                self.result_text.setPlainText("Resultado suma:\n" + "\n".join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res))
+                default_name = f"{a_name}_plus_{b_name}"
+            elif op == "Restar":
+                res = Matrices.subtract(a, b)
+                self.result_text.setPlainText("Resultado resta:\n" + "\n".join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res))
+                default_name = f"{a_name}_minus_{b_name}"
+            else:
+                QMessageBox.warning(self, "Error", f"Operación desconocida: {op}")
+                return
+
+            reply = QMessageBox.question(self, "Guardar resultado", f"¿Guardar resultado como '{default_name}'?",
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                Matrices.save_matrix(default_name, res)
+                self.reload_saved()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
 
     def multiply_by_scalar_selected(self):
         name = self.sel_a.text().strip()
@@ -505,48 +599,92 @@ class OperacionesMatricesGui(QWidget):
             scalar_txt = self.scalar_input.text().strip()
             if scalar_txt == "":
                 raise ValueError("Introduce un escalar válido.")
-            scalar = float(scalar_txt)
+            from fractions import Fraction
+            if '/' in scalar_txt:
+                scalar = float(Fraction(scalar_txt))
+            else:
+                scalar = float(scalar_txt)
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Escalar no válido: {e}")
             return
         a = saved[name]
         try:
             res = Matrices.multiply_scalar(a, scalar)
-            txt = f"Resultado {name} * {scalar}:\n" + '\n'.join(str(r) for r in res)
+            scalar_label = format_val(scalar)
+            txt = f"Resultado {name} * {scalar_label}:\n" + '\n'.join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res)
             self.result_text.setPlainText(txt)
-            reply = QMessageBox.question(self, "Guardar resultado", f"¿Guardar resultado como '{name}_x_{scalar}'?",
+            # sanitizar nombre de fichero (no usar '/' en nombres)
+            scalar_fname = scalar_label.replace('/', '_')
+            reply = QMessageBox.question(self, "Guardar resultado", f"¿Guardar resultado como '{name}_x_{scalar_fname}'?",
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:
-                Matrices.save_matrix(f"{name}_x_{scalar}", res)
+                Matrices.save_matrix(f"{name}_x_{scalar_fname}", res)
                 self.reload_saved()
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
     def delete_selected(self):
-        item = self.list_widget.currentItem()
-        if not item:
-            QMessageBox.warning(self, "Error", "Selecciona una matriz a eliminar.")
+        # Eliminar todas las matrices seleccionadas (soporte para multi-selección)
+        items = self.list_widget.selectedItems()
+        if not items:
+            QMessageBox.warning(self, "Error", "Selecciona una o más matrices a eliminar.")
             return
-        name = self._get_name_from_list_item(item.text())
-        reply = QMessageBox.question(self, "Confirmar eliminación", f"Eliminar '{name}'?",
+        names = [self._get_name_from_list_item(it.text()) for it in items]
+        # confirmar eliminaciones mostrando la lista
+        lista_nombres = "\n".join(names)
+        reply = QMessageBox.question(self, "Confirmar eliminación",
+                                     f"Eliminar las siguientes matrices?\n{lista_nombres}",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            Matrices.delete_saved_matrix(name)
+            for name in names:
+                try:
+                    Matrices.delete_saved_matrix(name)
+                except Exception as e:
+                    # registrar error y continuar con los demás
+                    self.result_text.append(f"Error eliminando '{name}': {e}")
             self.reload_saved()
-            self.result_text.setPlainText(f"Matriz '{name}' eliminada.")
+            self.result_text.setPlainText(f"Matrices eliminadas:\n{lista_nombres}")
+
+    def _toggle_list_item_at_pos(self, pos):
+        """Toggle selection of the item under the given position (right-click toggle).
+        pos is a QPoint in the coordinates of the list widget."""
+        item = self.list_widget.itemAt(pos)
+        if item is None:
+            return
+        # Toggle selection state
+        if item.isSelected():
+            item.setSelected(False)
+        else:
+            item.setSelected(True)
 
     def _delete_selected_vector(self):
-        item = self.vectors_list.currentItem()
-        if not item:
-            QMessageBox.warning(self, 'Error', 'Selecciona un vector a eliminar.')
+        # soportar eliminación de múltiples vectores
+        items = self.vectors_list.selectedItems()
+        if not items:
+            QMessageBox.warning(self, 'Error', 'Selecciona uno o más vectores a eliminar.')
             return
-        name = item.text().split('  ')[0]
-        reply = QMessageBox.question(self, 'Confirmar eliminación', f"Eliminar '{name}'?",
+        names = [it.text().split('  ')[0] for it in items]
+        lista = "\n".join(names)
+        reply = QMessageBox.question(self, 'Confirmar eliminación', f"Eliminar los siguientes vectores?\n{lista}",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            delete_saved_vector(name)
-            self.reload_saved()
-            self.result_text.setPlainText(f"Vector '{name}' eliminado.")
+            for name in names:
+                try:
+                    delete_saved_vector(name)
+                except Exception as e:
+                    self.result_text.append(f"Error eliminando '{name}': {e}")
+            # recargar listas
+            self.saved_vectors = load_saved_vectors()
+            self.vectors_list.clear()
+            for nm, vec in sorted(self.saved_vectors.items()):
+                self.vectors_list.addItem(f"{nm}  ({len(vec)})")
+            self.result_text.setPlainText(f"Vectores eliminados:\n{lista}")
+
+    def _toggle_vector_item_at_pos(self, pos):
+        item = self.vectors_list.itemAt(pos)
+        if item is None:
+            return
+        item.setSelected(not item.isSelected())
 
 
 if __name__ == '__main__':

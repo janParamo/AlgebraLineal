@@ -297,3 +297,29 @@ class Matrices:
         if any(len(row) != m for row in a):
             raise ValueError("Todas las filas de la matriz deben tener la misma longitud.")
         return [[float(x) * float(scalar) for x in row] for row in a]
+    
+    @staticmethod
+    def add(a: List[List[float]], b: List[List[float]]) -> List[List[float]]:
+        """Suma dos matrices A y B del mismo tamaño y devuelve la matriz resultado."""
+        if not a or not b:
+            raise ValueError("Ambas matrices deben ser no vacías.")
+        n = len(a)
+        m = len(a[0])
+        if any(len(row) != m for row in a):
+            raise ValueError("Todas las filas de A deben tener la misma longitud.")
+        if len(b) != n or any(len(row) != m for row in b):
+            raise ValueError(f"Dimensiones incompatibles: A es {n}x{m} pero B tiene forma distinta.")
+        return [[float(a[i][j]) + float(b[i][j]) for j in range(m)] for i in range(n)]
+
+    @staticmethod
+    def subtract(a: List[List[float]], b: List[List[float]]) -> List[List[float]]:
+        """Resta la matriz B de A (A - B) y devuelve la matriz resultado."""
+        if not a or not b:
+            raise ValueError("Ambas matrices deben ser no vacías.")
+        n = len(a)
+        m = len(a[0])
+        if any(len(row) != m for row in a):
+            raise ValueError("Todas las filas de A deben tener la misma longitud.")
+        if len(b) != n or any(len(row) != m for row in b):
+            raise ValueError(f"Dimensiones incompatibles: A es {n}x{m} pero B tiene forma distinta.")
+        return [[float(a[i][j]) - float(b[i][j]) for j in range(m)] for i in range(n)]
