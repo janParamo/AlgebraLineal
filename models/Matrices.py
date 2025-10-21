@@ -513,18 +513,23 @@ class Matrices:
         try:
             prod = Matrices.multiply(a, inv)
             is_I = Matrices._is_identity(prod)
-            max_err = 0.0
-            for i in range(len(prod)):
-                for j in range(len(prod[0])):
-                    target = 1.0 if i == j else 0.0
-                    max_err = max(max_err, abs(prod[i][j] - target))
             estado = "CUMPLE" if is_I else "NO CUMPLE"
-            pasos.append(f"1) A·A^{-1} = I  -> {estado} (error máx: {max_err:.2e})")
-            if is_I:
-                pasos.append("Producto A·A^{-1} (aprox. identidad):")
-                pasos.append(Matrices._mat_to_str_frac(prod))
+            pasos.append(f"1) A·A^{-1} = I  -> {estado}")
+            pasos.append("Producto A·A^{-1}:")
+            pasos.append(Matrices._mat_to_str_frac(prod))
         except Exception as e:
             pasos.append(f"1) A·A^{-1} = I  -> NO VERIFICADO ({e})")
+
+        # 1b) Comprobar A^{-1} * A = I (ambos sentidos, como en la definición)
+        try:
+            prod2 = Matrices.multiply(inv, a)
+            is_I2 = Matrices._is_identity(prod2)
+            estado2 = "CUMPLE" if is_I2 else "NO CUMPLE"
+            pasos.append(f"1b) A^{-1}·A = I -> {estado2}")
+            pasos.append("Producto A^{-1}·A:")
+            pasos.append(Matrices._mat_to_str_frac(prod2))
+        except Exception as e:
+            pasos.append(f"1b) A^{-1}·A = I -> NO VERIFICADO ({e})")
 
         # 2) (c) A tiene n posiciones pivote
         pasos.append(f"2) (c) A tiene n posiciones pivote -> {'CUMPLE' if len(pivot_positions)==n else 'NO CUMPLE'}; pivotes: "
@@ -533,4 +538,6 @@ class Matrices:
         pasos.append("3) (d) Ax = 0 solo tiene la solución trivial -> CUMPLE (A es invertible)")
         # 4) (e) Columnas de A son L.I. (equivalente a invertible)
         pasos.append("4) (e) Las columnas de A forman un conjunto L.I. -> CUMPLE (A es invertible)")
+        # 5) singularidad
+        pasos.append("5) Singularidad: matriz no singular (invertible)")
         return inv, pasos

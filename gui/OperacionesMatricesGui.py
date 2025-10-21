@@ -205,6 +205,18 @@ class OperacionesMatricesGui(QWidget):
         vec_layout.addWidget(self.btn_scalar)
         right.addLayout(vec_layout)
 
+        # tercera fila: entrada de ecuación y botón "Resolver ecuación"
+        eq_layout = QHBoxLayout()
+        self.equation_input = QLineEdit()
+        self.equation_input.setPlaceholderText("ej: (A*B)^T + C - D")
+        self.equation_input.setMinimumHeight(44)
+        eq_layout.addWidget(self.equation_input, 1)
+        self.btn_solve_equation = QPushButton("Resolver ecuación")
+        self.btn_solve_equation.setMinimumHeight(44)
+        self.btn_solve_equation.clicked.connect(self.solve_equation)
+        eq_layout.addWidget(self.btn_solve_equation)
+        right.addLayout(eq_layout)
+
         right.addWidget(QLabel("Resultado / Mensajes:"))
         self.result_text = QTextEdit()
         self.result_text.setReadOnly(True)
@@ -519,6 +531,159 @@ class OperacionesMatricesGui(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
+    # ---------------- Ecuaciones matriciales ----------------
+    def solve_equation(self):
+        expr = self.equation_input.text().strip()
+        if not expr:
+            QMessageBox.warning(self, "Error", "Ingresa una ecuación. Ej: (A*B)^T + C")
+            return
+        saved = Matrices.load_saved_matrices()
+        try:
+            res = self._eval_matrix_expression(expr, saved)
+        except Exception as e:
+            QMessageBox.critical(self, "Error al resolver ecuación", str(e))
+            return
+        # mostrar resultado en formato fracción si disponible
+        try:
+            fmt = Matrices._mat_to_str_frac(res)
+        except Exception:
+            fmt = "\n".join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res)
+        self.result_text.setPlainText("Resultado ecuación:\n" + fmt)
+        # Ofrecer guardado opcional
+        reply = QMessageBox.question(self, "Guardar resultado", "¿Guardar el resultado como 'expr_result'?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                Matrices.save_matrix("expr_result", res)
+                self.reload_saved()
+            except Exception as e:
+                QMessageBox.critical(self, "Error al guardar", str(e))
+
+    def _eval_matrix_expression(self, expr: str, saved: dict) -> List[List[float]]:
+        # Gramática soportada:
+        #   Expr   := Term (('+'|'-') Term)*
+        #   Term   := Factor ( '*' Factor )*
+        #   Factor := Primary ('^T')?
+        #   Primary:= IDENT | '(' Expr ')'
+        # Donde '^T' aplica transpuesta; una 'T' sin '^' se toma como nombre.
+
+        s = expr
+        i = 0
+
+        def skip_ws():
+            nonlocal i
+            while i < len(s) and s[i].isspace():
+                i += 1
+
+        def peek():
+            skip_ws()
+            return s[i] if i < len(s) else ''
+
+        def consume(ch=None):
+            nonlocal i
+            skip_ws()
+            if i >= len(s):
+                return ''
+            c = s[i]
+            if ch is not None and c != ch:
+                raise ValueError(f"Se esperaba '{ch}' en la posición {i+1}.")
+            i += 1
+            return c
+
+        def parse_ident():
+            nonlocal i
+            skip_ws()
+            if i >= len(s) or not (s[i].isalpha() or s[i]=='_'):
+                raise ValueError(f"Se esperaba un nombre de matriz en la posición {i+1}.")
+            start = i
+            i += 1
+            while i < len(s) and (s[i].isalnum() or s[i]=='_'):
+                i += 1
+            return s[start:i]
+
+        def parse_primary():
+            if peek() == '(':
+                consume('(')
+                val = parse_expr()
+                if peek() != ')':
+                    raise ValueError("Falta ')' de cierre en la ecuación.")
+                consume(')')
+                return val
+            name = parse_ident()
+            if name not in saved:
+                raise ValueError(f"Matriz '{name}' no existe en guardadas.")
+            return saved[name]
+
+        def mat_add(x, y):
+            return Matrices.add(x, y)
+
+        def mat_sub(x, y):
+            return Matrices.subtract(x, y)
+
+        def mat_mul(x, y):
+            return Matrices.multiply(x, y)
+
+        def mat_transpose(x):
+            return Matrices.transpose(x)
+
+        def parse_factor():
+            val = parse_primary()
+            # '^T' opcional (postfijo)
+            while True:
+                pos_before = (i)
+                skip_ws()
+                if i < len(s) and s[i] == '^':
+                    i += 1
+                    skip_ws()
+                    if i < len(s) and (s[i] == 'T' or s[i] == 't'):
+                        i += 1
+                        val = mat_transpose(val)
+                        continue
+                    else:
+                        raise ValueError("Solo se admite '^T' como operador de transpuesta.")
+                # no más '^T'
+                break
+            return val
+
+        def parse_unary():
+            # Soporta signo unario '-' para matrices: -A equivale a (-1)*A
+            if peek() == '-':
+                consume('-')
+                val = parse_unary()
+                return Matrices.multiply_scalar(val, -1.0)
+            return parse_factor()
+
+        def parse_term():
+            val = parse_unary()
+            while True:
+                if peek() == '*':
+                    consume('*')
+                    rhs = parse_unary()
+                    val = mat_mul(val, rhs)
+                else:
+                    break
+            return val
+
+        def parse_expr():
+            val = parse_term()
+            while True:
+                c = peek()
+                if c == '+':
+                    consume('+')
+                    rhs = parse_term()
+                    val = mat_add(val, rhs)
+                elif c == '-':
+                    consume('-')
+                    rhs = parse_term()
+                    val = mat_sub(val, rhs)
+                else:
+                    break
+            return val
+
+        result = parse_expr()
+        if i < len(s):
+            raise ValueError(f"Símbolo inesperado cerca de '{s[i:]}'")
+        return result
     def multiply_selected(self):
         a_name = self.sel_a.text().strip()
         b_name = self.sel_b.text().strip()
