@@ -21,6 +21,52 @@ def format_val(x):
 
 class Matrices:
     @staticmethod
+    def _is_identity(mat: List[List[float]], tol: float = 1e-8) -> bool:
+        if not mat:
+            return False
+        n = len(mat)
+        m = len(mat[0])
+        if n != m:
+            return False
+        for i in range(n):
+            for j in range(m):
+                if i == j:
+                    if abs(mat[i][j] - 1.0) > tol:
+                        return False
+                else:
+                    if abs(mat[i][j]) > tol:
+                        return False
+        return True
+    @staticmethod
+    def _aug_to_str(aug: List[List[float]], split: int) -> str:
+        """Formatea una matriz aumentada mostrando claramente [Matriz | Matriz reducida].
+
+        split indica el índice de separación entre el bloque izquierdo (A) y el derecho (I o A^{-1}).
+        """
+        lines = []
+        for i in range(len(aug)):
+            left = " ".join(f"{aug[i][j]:8.4f}" for j in range(split))
+            right = " ".join(f"{aug[i][j]:8.4f}" for j in range(split, len(aug[i])))
+            lines.append(f"[ {left} | {right} ]")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _mat_to_str_frac(mat: List[List[float]]) -> str:
+        """Formatea una matriz usando fracciones simplificadas para cada entrada."""
+        return "\n".join(
+            "[ " + " ".join(format_val(x) for x in row) + " ]" for row in mat
+        )
+
+    @staticmethod
+    def _aug_to_str_frac(aug: List[List[float]], split: int) -> str:
+        """Formatea una matriz aumentada usando fracciones: [Matriz | Matriz reducida]."""
+        lines = []
+        for i in range(len(aug)):
+            left = " ".join(format_val(aug[i][j]) for j in range(split))
+            right = " ".join(format_val(aug[i][j]) for j in range(split, len(aug[i])))
+            lines.append(f"[ {left} | {right} ]")
+        return "\n".join(lines)
+    @staticmethod
     def _validate_a_b(a: List[List[float]], b: List[List[float]]):
         if not isinstance(a, list) or not a or not isinstance(b, list) or not b:
             raise ValueError("Las matrices A y B no pueden estar vacías.")
@@ -323,3 +369,168 @@ class Matrices:
         if len(b) != n or any(len(row) != m for row in b):
             raise ValueError(f"Dimensiones incompatibles: A es {n}x{m} pero B tiene forma distinta.")
         return [[float(a[i][j]) - float(b[i][j]) for j in range(m)] for i in range(n)]
+
+    @staticmethod
+    def inverse(a: List[List[float]]) -> List[List[float]]:
+        """Calcula la inversa de una matriz cuadrada A por reducción por filas.
+
+        Algoritmo: construir la matriz aumentada [A | I] y aplicar operaciones
+        elementales de fila simultáneamente a ambas mitades hasta intentar llevar
+        A a la identidad. Si al finalizar la reducción la parte izquierda es I, la
+        parte derecha será A^{-1}. Si no, A no es invertible.
+
+        Lanza ValueError si la matriz no es cuadrada o no es invertible.
+        Devuelve una nueva matriz (lista de listas) con valores float.
+        """
+        if not a:
+            raise ValueError("La matriz no puede estar vacía.")
+        n = len(a)
+        m = len(a[0])
+        if any(len(row) != m for row in a):
+            raise ValueError("Todas las filas de la matriz deben tener la misma longitud.")
+        if n != m:
+            raise ValueError("Solo se puede invertir una matriz cuadrada.")
+
+        # crear copia y matriz identidad a la derecha
+        # usar floats para cálculos
+        aug = [ [float(x) for x in row] + [1.0 if i==j else 0.0 for j in range(n)] for i, row in enumerate(a) ]
+
+        # aplicar Gauss-Jordan sobre [A | I]
+        for col in range(n):
+            # encontrar pivote (mayor absoluto) para estabilidad
+            pivot_row = max(range(col, n), key=lambda r: abs(aug[r][col]))
+            if abs(aug[pivot_row][col]) < EPS:
+                raise ValueError("La matriz es singular y no tiene inversa.")
+            # intercambiar si es necesario
+            if pivot_row != col:
+                aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
+            piv = aug[col][col]
+            # normalizar fila del pivote
+            if abs(piv - 1.0) > EPS:
+                for j in range(2*n):
+                    aug[col][j] /= piv
+            # eliminar otras filas en la columna actual
+            for r in range(n):
+                if r == col:
+                    continue
+                factor = aug[r][col]
+                if abs(factor) > EPS:
+                    for j in range(2*n):
+                        aug[r][j] -= factor * aug[col][j]
+
+        # verificación explícita: la parte izquierda debe ser la identidad
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    if abs(aug[i][j] - 1.0) > 1e-8:
+                        raise ValueError("La matriz no se redujo a la identidad; no es invertible.")
+                else:
+                    if abs(aug[i][j]) > 1e-8:
+                        raise ValueError("La matriz no se redujo a la identidad; no es invertible.")
+
+        # extraer la parte derecha como inversa
+        inv = [ [aug[i][n + j] for j in range(n)] for i in range(n) ]
+        return inv
+
+    @staticmethod
+    def inverse_with_steps(a: List[List[float]]) -> Tuple[List[List[float]], List[str]]:
+        """Calcula la inversa de A por reducción por filas y devuelve (inversa, pasos).
+
+        Pasos incluye mensajes de operaciones elementales y estados intermedios
+        de la matriz aumentada [A | I]. Lanza ValueError si A no es invertible.
+        """
+        if not a:
+            raise ValueError("La matriz no puede estar vacía.")
+        n = len(a)
+        m = len(a[0])
+        if any(len(row) != m for row in a):
+            raise ValueError("Todas las filas de la matriz deben tener la misma longitud.")
+        if n != m:
+            raise ValueError("Solo se puede invertir una matriz cuadrada.")
+
+        aug = [[float(x) for x in row] + [1.0 if i == j else 0.0 for j in range(n)]
+               for i, row in enumerate(a)]
+        pasos: List[str] = []
+        pasos.append(f"Calculando inversa de matriz {n}x{n} por reducción por filas")
+        pasos.append("[Matriz | Matriz reducida] inicial:")
+        pasos.append(Matrices._aug_to_str_frac(aug, n))
+
+        pivot_positions: List[Tuple[int, int]] = []
+        for col in range(n):
+            # pivoteo parcial
+            pivot_row = max(range(col, n), key=lambda r: abs(aug[r][col]))
+            if abs(aug[pivot_row][col]) < EPS:
+                pasos.append(f"No se encontró pivote distinto de 0 en la columna {col+1}. A es singular.")
+                raise ValueError("La matriz es singular y no tiene inversa.")
+            if pivot_row != col:
+                aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
+                pasos.append(f"f{col+1} <-> f{pivot_row+1}")
+                pasos.append(Matrices._aug_to_str_frac(aug, n))
+            piv = aug[col][col]
+            pivot_positions.append((col, col))
+            if abs(piv - 1.0) > EPS:
+                for j in range(2*n):
+                    aug[col][j] /= piv
+                coef = format_val(1.0/piv)
+                pasos.append(f"f{col+1} --> {coef}*f{col+1}")
+                pasos.append(Matrices._aug_to_str_frac(aug, n))
+            # eliminación en otras filas
+            for r in range(n):
+                if r == col:
+                    continue
+                factor = aug[r][col]
+                if abs(factor) > EPS:
+                    for j in range(2*n):
+                        aug[r][j] -= factor * aug[col][j]
+                    pasos.append(f"f{r+1} --> f{r+1} - {format_val(abs(factor))}*f{col+1}")
+                    pasos.append(Matrices._aug_to_str_frac(aug, n))
+
+        # Verificar parte izquierda == I
+        ok = True
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    if abs(aug[i][j] - 1.0) > 1e-8:
+                        ok = False
+                        break
+                else:
+                    if abs(aug[i][j]) > 1e-8:
+                        ok = False
+                        break
+            if not ok:
+                break
+        if not ok:
+            pasos.append("La parte izquierda no se redujo a la identidad; A no es invertible.")
+            raise ValueError("La matriz no se redujo a la identidad; no es invertible.")
+
+        inv = [[aug[i][n + j] for j in range(n)] for i in range(n)]
+        pasos.append("Parte izquierda reducida a I; extraemos A^{-1} de la derecha:")
+        pasos.append(Matrices._mat_to_str_frac(inv))
+        
+        # Verificaciones finales
+        pasos.append("\nVerificaciones de invertibilidad:")
+        # 1) Comprobar A * A^{-1} = I
+        try:
+            prod = Matrices.multiply(a, inv)
+            is_I = Matrices._is_identity(prod)
+            max_err = 0.0
+            for i in range(len(prod)):
+                for j in range(len(prod[0])):
+                    target = 1.0 if i == j else 0.0
+                    max_err = max(max_err, abs(prod[i][j] - target))
+            estado = "CUMPLE" if is_I else "NO CUMPLE"
+            pasos.append(f"1) A·A^{-1} = I  -> {estado} (error máx: {max_err:.2e})")
+            if is_I:
+                pasos.append("Producto A·A^{-1} (aprox. identidad):")
+                pasos.append(Matrices._mat_to_str_frac(prod))
+        except Exception as e:
+            pasos.append(f"1) A·A^{-1} = I  -> NO VERIFICADO ({e})")
+
+        # 2) (c) A tiene n posiciones pivote
+        pasos.append(f"2) (c) A tiene n posiciones pivote -> {'CUMPLE' if len(pivot_positions)==n else 'NO CUMPLE'}; pivotes: "
+                     + ", ".join(f"(f{r+1},c{c+1})" for r,c in pivot_positions))
+        # 3) (d) Ax=0 solo tiene la solución trivial (equivalente a invertible)
+        pasos.append("3) (d) Ax = 0 solo tiene la solución trivial -> CUMPLE (A es invertible)")
+        # 4) (e) Columnas de A son L.I. (equivalente a invertible)
+        pasos.append("4) (e) Las columnas de A forman un conjunto L.I. -> CUMPLE (A es invertible)")
+        return inv, pasos

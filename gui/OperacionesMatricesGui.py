@@ -168,7 +168,7 @@ class OperacionesMatricesGui(QWidget):
         sel_layout.addWidget(self.sel_b)
         # Operación: ahora con combo box para elegir Multiplicar / Sumar / Restar
         self.op_combo = QComboBox()
-        self.op_combo.addItems(["Multiplicar", "Sumar", "Restar"])
+        self.op_combo.addItems(["Multiplicar", "Sumar", "Restar", "Calculo de inversa"])
         self.op_combo.setFixedWidth(140)
         sel_layout.addWidget(self.op_combo)
         # Botón para ejecutar la operación seleccionada
@@ -545,22 +545,40 @@ class OperacionesMatricesGui(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error al multiplicar", str(e))
     def operate_selected(self):
-        """Ejecuta la operación seleccionada en el combo (Multiplicar/Sumar/Restar) sobre A y B guardadas."""
+        """Ejecuta la operación seleccionada en el combo sobre las matrices guardadas.
+
+        Multiplicar/Sumar/Restar requieren A y B. Calculo de inversa requiere solo A.
+        """
         op = self.op_combo.currentText()
         a_name = self.sel_a.text().strip()
         b_name = self.sel_b.text().strip()
-        if not a_name or not b_name:
-            QMessageBox.warning(self, "Error", "Proporciona ambos nombres A y B.")
-            return
         saved = Matrices.load_saved_matrices()
-        if a_name not in saved:
-            QMessageBox.warning(self, "Error", f"No existe la matriz A: {a_name}")
+
+        # Validaciones por operación
+        if op in ("Multiplicar", "Sumar", "Restar"):
+            if not a_name or not b_name:
+                QMessageBox.warning(self, "Error", "Proporciona ambos nombres A y B.")
+                return
+            if a_name not in saved:
+                QMessageBox.warning(self, "Error", f"No existe la matriz A: {a_name}")
+                return
+            if b_name not in saved:
+                QMessageBox.warning(self, "Error", f"No existe la matriz B: {b_name}")
+                return
+            a = saved[a_name]
+            b = saved[b_name]
+        elif op == "Calculo de inversa":
+            if not a_name:
+                QMessageBox.warning(self, "Error", "Proporciona el nombre de la matriz A a invertir.")
+                return
+            if a_name not in saved:
+                QMessageBox.warning(self, "Error", f"No existe la matriz A: {a_name}")
+                return
+            a = saved[a_name]
+            b = None
+        else:
+            QMessageBox.warning(self, "Error", f"Operación desconocida: {op}")
             return
-        if b_name not in saved:
-            QMessageBox.warning(self, "Error", f"No existe la matriz B: {b_name}")
-            return
-        a = saved[a_name]
-        b = saved[b_name]
         try:
             if op == "Multiplicar":
                 res, pasos = Matrices.multiply_with_steps(a, b)
@@ -574,6 +592,17 @@ class OperacionesMatricesGui(QWidget):
                 res = Matrices.subtract(a, b)
                 self.result_text.setPlainText("Resultado resta:\n" + "\n".join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res))
                 default_name = f"{a_name}_minus_{b_name}"
+            elif op == "Calculo de inversa":
+                # Para invertir solo se usa A. Mostrar pasos de la reducción.
+                try:
+                    inv, pasos = Matrices.inverse_with_steps(a)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error al calcular inversa", str(e))
+                    return
+                # Mostrar todos los pasos y al final la inversa
+                self.result_text.setPlainText("\n".join(pasos))
+                res = inv
+                default_name = f"{a_name}_inv"
             else:
                 QMessageBox.warning(self, "Error", f"Operación desconocida: {op}")
                 return
