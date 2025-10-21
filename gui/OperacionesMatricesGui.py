@@ -198,7 +198,7 @@ class OperacionesMatricesGui(QWidget):
         vec_layout.addWidget(QLabel("Escalar:"))
         self.scalar_input = QLineEdit()
         self.scalar_input.setFixedWidth(100)
-        self.scalar_input.setPlaceholderText("ej: 2.5")
+        self.scalar_input.setPlaceholderText("ej: 2.5 o 3/4")
         vec_layout.addWidget(self.scalar_input)
         self.btn_scalar = QPushButton("A * escalar")
         self.btn_scalar.clicked.connect(self.multiply_by_scalar_selected)
@@ -208,7 +208,7 @@ class OperacionesMatricesGui(QWidget):
         # tercera fila: entrada de ecuación y botón "Resolver ecuación"
         eq_layout = QHBoxLayout()
         self.equation_input = QLineEdit()
-        self.equation_input.setPlaceholderText("ej: (A*B)^T + C - D")
+        self.equation_input.setPlaceholderText("ej: (A*B)^T + (3/4)*C - D, 2*A, A^-1")
         self.equation_input.setMinimumHeight(44)
         eq_layout.addWidget(self.equation_input, 1)
         self.btn_solve_equation = QPushButton("Resolver ecuación")
@@ -538,37 +538,119 @@ class OperacionesMatricesGui(QWidget):
             QMessageBox.warning(self, "Error", "Ingresa una ecuación. Ej: (A*B)^T + C")
             return
         saved = Matrices.load_saved_matrices()
+        # Soportar igualdad: LHS = RHS
+        if '=' in expr:
+            lhs_str, rhs_str = expr.split('=', 1)
+            lhs_str = lhs_str.strip()
+            rhs_str = rhs_str.strip()
+            try:
+                lhs_val, lhs_steps, lhs_used = self._eval_matrix_expression(lhs_str, saved)
+                rhs_val, rhs_steps, rhs_used = self._eval_matrix_expression(rhs_str, saved)
+            except Exception as e:
+                QMessageBox.critical(self, "Error al resolver ecuación", str(e))
+                return
+            # Construir salida detallada con pasos de ambos lados
+            out: list[str] = []
+            # Encabezado único de matrices usadas (unión de ambos lados)
+            used_all = {**lhs_used, **rhs_used}
+            if used_all:
+                out.append("Matrices usadas:")
+                for nm in sorted(used_all.keys()):
+                    out.append(f"{nm}:")
+                    out.append(Matrices._mat_to_str_frac(used_all[nm]))
+                out.append("")
+            out.append(f"Lado izquierdo: {lhs_str}")
+            out.extend(lhs_steps)
+            out.append("Resultado izquierdo:")
+            out.append(Matrices._mat_to_str_frac(lhs_val))
+            out.append("")
+            out.append(f"Lado derecho: {rhs_str}")
+            out.extend(rhs_steps)
+            out.append("Resultado derecho:")
+            out.append(Matrices._mat_to_str_frac(rhs_val))
+            out.append("")
+            iguales = Matrices.equal(lhs_val, rhs_val)
+            out.append(f"¿Se cumple la igualdad LHS = RHS? -> {'SI' if iguales else 'NO'}")
+            self.result_text.setPlainText("\n".join(out))
+            # Ofrecer guardar resultados izquierdo y/o derecho con nombres sugeridos
+            # Sugerencias simples basadas en etiquetas
+            from re import sub
+            def sanitize(name: str) -> str:
+                return sub(r"[^A-Za-z0-9_\-]", "_", name)[:50] or "resultado"
+            left_suggest = sanitize(f"lhs_{lhs_str}")
+            right_suggest = sanitize(f"rhs_{rhs_str}")
+            # Guardar lado izquierdo
+            text, ok = QInputDialog.getText(self, "Guardar LHS",
+                                            "Nombre para guardar el lado izquierdo (puedes editar):",
+                                            QLineEdit.EchoMode.Normal,
+                                            left_suggest)
+            if ok:
+                final = text.strip() or left_suggest
+                try:
+                    Matrices.save_matrix(final, lhs_val)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error al guardar LHS", str(e))
+            # Guardar lado derecho
+            text2, ok2 = QInputDialog.getText(self, "Guardar RHS",
+                                              "Nombre para guardar el lado derecho (puedes editar):",
+                                              QLineEdit.EchoMode.Normal,
+                                              right_suggest)
+            if ok2:
+                final2 = text2.strip() or right_suggest
+                try:
+                    Matrices.save_matrix(final2, rhs_val)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error al guardar RHS", str(e))
+            self.reload_saved()
+            return
+        # Caso sin igualdad: mostrar pasos del cálculo de la expresión
         try:
-            res = self._eval_matrix_expression(expr, saved)
+            res, pasos, used = self._eval_matrix_expression(expr, saved)
         except Exception as e:
             QMessageBox.critical(self, "Error al resolver ecuación", str(e))
             return
-        # mostrar resultado en formato fracción si disponible
-        try:
-            fmt = Matrices._mat_to_str_frac(res)
-        except Exception:
-            fmt = "\n".join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res)
-        self.result_text.setPlainText("Resultado ecuación:\n" + fmt)
-        # Ofrecer guardado opcional
-        reply = QMessageBox.question(self, "Guardar resultado", "¿Guardar el resultado como 'expr_result'?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
+        out: list[str] = []
+        if used:
+            out.append("Matrices usadas:")
+            for nm in sorted(used.keys()):
+                out.append(f"{nm}:")
+                out.append(Matrices._mat_to_str_frac(used[nm]))
+            out.append("")
+        out.extend(pasos)
+        out.append("Resultado final de la expresión:")
+        out.append(Matrices._mat_to_str_frac(res))
+        self.result_text.setPlainText("\n".join(out))
+        # Ofrecer guardado con nombre sugerido editable
+        from re import sub
+        suggest = "expr_result"
+        text, ok = QInputDialog.getText(self, "Guardar resultado",
+                                        "Nombre para guardar (puedes editar):",
+                                        QLineEdit.EchoMode.Normal,
+                                        suggest)
+        if ok:
+            final = text.strip() or suggest
             try:
-                Matrices.save_matrix("expr_result", res)
+                Matrices.save_matrix(final, res)
                 self.reload_saved()
             except Exception as e:
                 QMessageBox.critical(self, "Error al guardar", str(e))
 
-    def _eval_matrix_expression(self, expr: str, saved: dict) -> List[List[float]]:
-        # Gramática soportada:
+    def _eval_matrix_expression(self, expr: str, saved: dict):
+        # Gramática extendida con escalares, transpuesta e inversa (postfijas):
         #   Expr   := Term (('+'|'-') Term)*
-        #   Term   := Factor ( '*' Factor )*
-        #   Factor := Primary ('^T')?
-        #   Primary:= IDENT | '(' Expr ')'
-        # Donde '^T' aplica transpuesta; una 'T' sin '^' se toma como nombre.
+        #   Term   := Unary ( '*' Unary )*
+        #   Unary  := '-' Unary | Factor
+        #   Factor := Primary ( Postfix )*
+        #   Primary:= IDENT | NUMBER | '(' Expr ')'
+        #   Postfix:= '^T' | '^-1' | '^(-1)'
+        # Reglas:
+        #  - '+' y '-' solo entre matrices. no se admite matriz +/- escalar.
+        #  - '*' permite mat*mat, esc*mat, mat*esc.
+        #  - '^T' y '^-1' aplican solo a matrices.
 
         s = expr
         i = 0
+        used_mats: dict[str, list[list[float]]] = {}
 
         def skip_ws():
             nonlocal i
@@ -591,7 +673,7 @@ class OperacionesMatricesGui(QWidget):
             return c
 
         def parse_ident():
-            nonlocal i
+            nonlocal i, used_mats
             skip_ws()
             if i >= len(s) or not (s[i].isalpha() or s[i]=='_'):
                 raise ValueError(f"Se esperaba un nombre de matriz en la posición {i+1}.")
@@ -601,7 +683,46 @@ class OperacionesMatricesGui(QWidget):
                 i += 1
             return s[start:i]
 
+        def parse_number():
+            # Acepta enteros, decimales, fracciones tipo 3/4
+            nonlocal i
+            skip_ws()
+            start = i
+            # parte entera/decimal
+            has_digit = False
+            while i < len(s) and (s[i].isdigit() or s[i]=='.'):
+                if s[i].isdigit():
+                    has_digit = True
+                i += 1
+            if not has_digit:
+                return None
+            num = s[start:i]
+            skip_ws()
+            # posible fracción con / y denominador
+            if i < len(s) and s[i] == '/':
+                i += 1
+                skip_ws()
+                start_den = i
+                if i >= len(s) or not s[i].isdigit():
+                    raise ValueError("Denominador de fracción inválido.")
+                while i < len(s) and s[i].isdigit():
+                    i += 1
+                den = s[start_den:i]
+                from fractions import Fraction
+                try:
+                    val = float(Fraction(num + '/' + den))
+                except Exception:
+                    raise ValueError("Número fraccionario inválido.")
+                return ('scalar', val, [f"Escalar {num}/{den}"])
+            else:
+                try:
+                    val = float(num)
+                    return ('scalar', val, [f"Escalar {num}"])
+                except Exception:
+                    return None
+
         def parse_primary():
+            nonlocal i
             if peek() == '(':
                 consume('(')
                 val = parse_expr()
@@ -609,48 +730,132 @@ class OperacionesMatricesGui(QWidget):
                     raise ValueError("Falta ')' de cierre en la ecuación.")
                 consume(')')
                 return val
+            # número
+            pos_before = i
+            num = parse_number()
+            if num is not None:
+                return num
+            # identificador
+            i = pos_before
             name = parse_ident()
             if name not in saved:
                 raise ValueError(f"Matriz '{name}' no existe en guardadas.")
-            return saved[name]
+            mat = saved[name]
+            # Registrar uso de matriz pero no repetir impresión en pasos
+            used_mats[name] = mat
+            return ('matrix', mat, []) 
+
+        def as_mat(val):
+            if val[0] != 'matrix':
+                raise ValueError("Operación válida solo para matrices.")
+            return val[1]
+
+        def as_scalar(val):
+            if val[0] != 'scalar':
+                raise ValueError("Se esperaba un escalar.")
+            return float(val[1])
+
+        def to_scalar(val):
+            return val[0] == 'scalar'
+
+        def to_matrix(val):
+            return val[0] == 'matrix'
+
+        def steps_of(val):
+            return val[2] if len(val) > 2 else []
+
+        def wrap_matrix(m, steps=None):
+            return ('matrix', m, steps or [])
+
+        def wrap_scalar(x, steps=None):
+            return ('scalar', float(x), steps or [])
 
         def mat_add(x, y):
-            return Matrices.add(x, y)
+            if not (to_matrix(x) and to_matrix(y)):
+                raise ValueError("La suma/resta sólo está definida entre matrices.")
+            res, p = Matrices.add_with_steps(as_mat(x), as_mat(y))
+            return wrap_matrix(res, steps_of(x) + steps_of(y) + p)
 
         def mat_sub(x, y):
-            return Matrices.subtract(x, y)
+            if not (to_matrix(x) and to_matrix(y)):
+                raise ValueError("La suma/resta sólo está definida entre matrices.")
+            res, p = Matrices.subtract_with_steps(as_mat(x), as_mat(y))
+            return wrap_matrix(res, steps_of(x) + steps_of(y) + p)
 
         def mat_mul(x, y):
-            return Matrices.multiply(x, y)
+            # mat*mat, mat*scalar, scalar*mat
+            if to_matrix(x) and to_matrix(y):
+                res, p = Matrices.multiply_with_steps(as_mat(x), as_mat(y))
+                return wrap_matrix(res, steps_of(x) + steps_of(y) + p)
+            if to_matrix(x) and to_scalar(y):
+                res, p = Matrices.multiply_scalar_with_steps(as_mat(x), as_scalar(y))
+                return wrap_matrix(res, steps_of(x) + steps_of(y) + p)
+            if to_scalar(x) and to_matrix(y):
+                res, p = Matrices.multiply_scalar_with_steps(as_mat(y), as_scalar(x))
+                return wrap_matrix(res, steps_of(x) + steps_of(y) + p)
+            raise ValueError("Multiplicación inválida: no se admite escalar*escalar en expresiones matriciales.")
 
         def mat_transpose(x):
-            return Matrices.transpose(x)
+            if not to_matrix(x):
+                raise ValueError("La transpuesta sólo aplica a matrices.")
+            t, p = Matrices.transpose_with_steps(as_mat(x))
+            return wrap_matrix(t, steps_of(x) + p)
+
+        def mat_inverse(x):
+            if not to_matrix(x):
+                raise ValueError("La inversa sólo aplica a matrices.")
+            inv, p = Matrices.inverse_with_steps(as_mat(x))
+            return wrap_matrix(inv, steps_of(x) + p)
 
         def parse_factor():
+            nonlocal i
             val = parse_primary()
-            # '^T' opcional (postfijo)
+            # Postfijos: ^T, ^-1, ^(-1)
             while True:
-                pos_before = (i)
                 skip_ws()
                 if i < len(s) and s[i] == '^':
                     i += 1
                     skip_ws()
-                    if i < len(s) and (s[i] == 'T' or s[i] == 't'):
+                    if i < len(s) and (s[i] in ('T', 't')):
                         i += 1
                         val = mat_transpose(val)
                         continue
-                    else:
-                        raise ValueError("Solo se admite '^T' como operador de transpuesta.")
-                # no más '^T'
+                    # ^-1 ó ^(-1)
+                    if i < len(s) and s[i] == '-':
+                        i += 1
+                        if i < len(s) and s[i] == '1':
+                            i += 1
+                            val = mat_inverse(val)
+                            continue
+                        else:
+                            raise ValueError("Se esperaba '^-1' para inversa.")
+                    if i < len(s) and s[i] == '(':
+                        i += 1
+                        skip_ws()
+                        if i < len(s) and s[i] == '-':
+                            i += 1
+                            if i < len(s) and s[i] == '1':
+                                i += 1
+                                skip_ws()
+                                if i < len(s) and s[i] == ')':
+                                    i += 1
+                                    val = mat_inverse(val)
+                                    continue
+                        raise ValueError("Se esperaba '^(-1)' para inversa.")
+                    raise ValueError("Operador '^' no reconocido. Use '^T' o '^-1'.")
                 break
             return val
 
         def parse_unary():
-            # Soporta signo unario '-' para matrices: -A equivale a (-1)*A
             if peek() == '-':
                 consume('-')
                 val = parse_unary()
-                return Matrices.multiply_scalar(val, -1.0)
+                if to_matrix(val):
+                    res, p = Matrices.multiply_scalar_with_steps(as_mat(val), -1.0)
+                    return wrap_matrix(res, steps_of(val) + p)
+                if to_scalar(val):
+                    return wrap_scalar(-as_scalar(val), steps_of(val) + ["Aplicando signo unario a escalar"]) 
+                raise ValueError("Signo unario inválido.")
             return parse_factor()
 
         def parse_term():
@@ -683,7 +888,9 @@ class OperacionesMatricesGui(QWidget):
         result = parse_expr()
         if i < len(s):
             raise ValueError(f"Símbolo inesperado cerca de '{s[i:]}'")
-        return result
+        if not (result[0] == 'matrix'):
+            raise ValueError("La expresión resultó en un escalar; se esperaba una matriz.")
+        return result[1], steps_of(result), used_mats
     def multiply_selected(self):
         a_name = self.sel_a.text().strip()
         b_name = self.sel_b.text().strip()
@@ -750,12 +957,12 @@ class OperacionesMatricesGui(QWidget):
                 self.result_text.setPlainText("\n".join(pasos))
                 default_name = f"{a_name}_x_{b_name}"
             elif op == "Sumar":
-                res = Matrices.add(a, b)
-                self.result_text.setPlainText("Resultado suma:\n" + "\n".join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res))
+                res, pasos = Matrices.add_with_steps(a, b)
+                self.result_text.setPlainText("\n".join(pasos))
                 default_name = f"{a_name}_plus_{b_name}"
             elif op == "Restar":
-                res = Matrices.subtract(a, b)
-                self.result_text.setPlainText("Resultado resta:\n" + "\n".join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res))
+                res, pasos = Matrices.subtract_with_steps(a, b)
+                self.result_text.setPlainText("\n".join(pasos))
                 default_name = f"{a_name}_minus_{b_name}"
             elif op == "Calculo de inversa":
                 # Para invertir solo se usa A. Mostrar pasos de la reducción.
@@ -772,11 +979,18 @@ class OperacionesMatricesGui(QWidget):
                 QMessageBox.warning(self, "Error", f"Operación desconocida: {op}")
                 return
 
-            reply = QMessageBox.question(self, "Guardar resultado", f"¿Guardar resultado como '{default_name}'?",
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                Matrices.save_matrix(default_name, res)
-                self.reload_saved()
+            # Solicitar nombre para guardar (sugerido editable)
+            text, ok = QInputDialog.getText(self, "Guardar resultado",
+                                            "Nombre para guardar (puedes editar):",
+                                            QLineEdit.EchoMode.Normal,
+                                            default_name)
+            if ok:
+                final_name = text.strip() or default_name
+                try:
+                    Matrices.save_matrix(final_name, res)
+                    self.reload_saved()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error al guardar", str(e))
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
@@ -803,16 +1017,19 @@ class OperacionesMatricesGui(QWidget):
             return
         a = saved[name]
         try:
-            res = Matrices.multiply_scalar(a, scalar)
+            res, pasos = Matrices.multiply_scalar_with_steps(a, scalar)
+            self.result_text.setPlainText("\n".join(pasos))
             scalar_label = format_val(scalar)
-            txt = f"Resultado {name} * {scalar_label}:\n" + '\n'.join("[ " + ", ".join(format_val(x) for x in row) + " ]" for row in res)
-            self.result_text.setPlainText(txt)
-            # sanitizar nombre de fichero (no usar '/' en nombres)
+            # sanitizar sugerencia (no usar '/')
             scalar_fname = scalar_label.replace('/', '_')
-            reply = QMessageBox.question(self, "Guardar resultado", f"¿Guardar resultado como '{name}_x_{scalar_fname}'?",
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                Matrices.save_matrix(f"{name}_x_{scalar_fname}", res)
+            default_name = f"{name}_x_{scalar_fname}"
+            text, ok = QInputDialog.getText(self, "Guardar resultado",
+                                            "Nombre para guardar (puedes editar):",
+                                            QLineEdit.EchoMode.Normal,
+                                            default_name)
+            if ok:
+                final_name = text.strip() or default_name
+                Matrices.save_matrix(final_name, res)
                 self.reload_saved()
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))

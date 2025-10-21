@@ -252,7 +252,8 @@ class Matrices:
                 res[i][j] = s
                 pasos.append(f"C[{i+1},{j+1}] = " + " + ".join(terms) + f" = {format_val(s)}")
         pasos.append("Resultado final:")
-        pasos.append(Matrices._mat_to_str(res))
+        # Mostrar en formato fracción para consistencia con el resto de la app
+        pasos.append(Matrices._mat_to_str_frac(res))
         return res, pasos
 
     @staticmethod
@@ -343,6 +344,28 @@ class Matrices:
         if any(len(row) != m for row in a):
             raise ValueError("Todas las filas de la matriz deben tener la misma longitud.")
         return [[float(x) * float(scalar) for x in row] for row in a]
+
+    @staticmethod
+    def multiply_scalar_with_steps(a: List[List[float]], scalar: float) -> Tuple[List[List[float]], List[str]]:
+        """Multiplica A por un escalar y devuelve (resultado, pasos) detallando cada entrada."""
+        if not a:
+            raise ValueError("La matriz no puede estar vacía.")
+        m = len(a[0])
+        if any(len(row) != m for row in a):
+            raise ValueError("Todas las filas de la matriz deben tener la misma longitud.")
+        k = float(scalar)
+        res = [[0.0 for _ in row] for row in a]
+        pasos: List[str] = []
+        pasos.append(f"Multiplicando matriz {len(a)}x{m} por escalar {format_val(k)}:")
+        for i in range(len(a)):
+            for j in range(m):
+                val = float(a[i][j])
+                r = k * val
+                res[i][j] = r
+                pasos.append(f"C[{i+1},{j+1}] = {format_val(k)}*{format_val(val)} = {format_val(r)}")
+        pasos.append("Resultado final:")
+        pasos.append(Matrices._mat_to_str_frac(res))
+        return res, pasos
     
     @staticmethod
     def add(a: List[List[float]], b: List[List[float]]) -> List[List[float]]:
@@ -358,6 +381,31 @@ class Matrices:
         return [[float(a[i][j]) + float(b[i][j]) for j in range(m)] for i in range(n)]
 
     @staticmethod
+    def add_with_steps(a: List[List[float]], b: List[List[float]]) -> Tuple[List[List[float]], List[str]]:
+        """Suma A + B y devuelve (resultado, pasos) detallando cada entrada."""
+        if not a or not b:
+            raise ValueError("Ambas matrices deben ser no vacías.")
+        n = len(a)
+        m = len(a[0])
+        if any(len(row) != m for row in a):
+            raise ValueError("Todas las filas de A deben tener la misma longitud.")
+        if len(b) != n or any(len(row) != m for row in b):
+            raise ValueError(f"Dimensiones incompatibles: A es {n}x{m} pero B tiene forma distinta.")
+        res = [[0.0 for _ in range(m)] for _ in range(n)]
+        pasos: List[str] = []
+        pasos.append(f"Sumando A ({n}x{m}) + B ({n}x{m}):")
+        for i in range(n):
+            for j in range(m):
+                aij = float(a[i][j])
+                bij = float(b[i][j])
+                s = aij + bij
+                res[i][j] = s
+                pasos.append(f"C[{i+1},{j+1}] = {format_val(aij)} + {format_val(bij)} = {format_val(s)}")
+        pasos.append("Resultado final:")
+        pasos.append(Matrices._mat_to_str_frac(res))
+        return res, pasos
+
+    @staticmethod
     def subtract(a: List[List[float]], b: List[List[float]]) -> List[List[float]]:
         """Resta la matriz B de A (A - B) y devuelve la matriz resultado."""
         if not a or not b:
@@ -369,6 +417,47 @@ class Matrices:
         if len(b) != n or any(len(row) != m for row in b):
             raise ValueError(f"Dimensiones incompatibles: A es {n}x{m} pero B tiene forma distinta.")
         return [[float(a[i][j]) - float(b[i][j]) for j in range(m)] for i in range(n)]
+
+    @staticmethod
+    def subtract_with_steps(a: List[List[float]], b: List[List[float]]) -> Tuple[List[List[float]], List[str]]:
+        """Resta A - B y devuelve (resultado, pasos) detallando cada entrada."""
+        if not a or not b:
+            raise ValueError("Ambas matrices deben ser no vacías.")
+        n = len(a)
+        m = len(a[0])
+        if any(len(row) != m for row in a):
+            raise ValueError("Todas las filas de A deben tener la misma longitud.")
+        if len(b) != n or any(len(row) != m for row in b):
+            raise ValueError(f"Dimensiones incompatibles: A es {n}x{m} pero B tiene forma distinta.")
+        res = [[0.0 for _ in range(m)] for _ in range(n)]
+        pasos: List[str] = []
+        pasos.append(f"Restando A ({n}x{m}) - B ({n}x{m}):")
+        for i in range(n):
+            for j in range(m):
+                aij = float(a[i][j])
+                bij = float(b[i][j])
+                d = aij - bij
+                res[i][j] = d
+                pasos.append(f"C[{i+1},{j+1}] = {format_val(aij)} - {format_val(bij)} = {format_val(d)}")
+        pasos.append("Resultado final:")
+        pasos.append(Matrices._mat_to_str_frac(res))
+        return res, pasos
+
+    @staticmethod
+    def equal(a: List[List[float]], b: List[List[float]], tol: float = 1e-8) -> bool:
+        """Compara dos matrices por igualdad con tolerancia absoluta."""
+        if not a and not b:
+            return True
+        if (not a) or (not b):
+            return False
+        if len(a) != len(b) or len(a[0]) != len(b[0]):
+            return False
+        n, m = len(a), len(a[0])
+        for i in range(n):
+            for j in range(m):
+                if abs(float(a[i][j]) - float(b[i][j])) > tol:
+                    return False
+        return True
 
     @staticmethod
     def inverse(a: List[List[float]]) -> List[List[float]]:
