@@ -320,6 +320,15 @@ class Matrices:
         """Guarda (o sobrescribe) una matriz con el nombre proporcionado en el archivo JSON."""
         if not name or not isinstance(name, str):
             raise ValueError("El nombre debe ser una cadena no vacía.")
+        # Validar que no exista un vector con el mismo nombre
+        try:
+            from models.Vectores import load_saved_vectors  # lazy import para evitar ciclos
+            vecs = load_saved_vectors()
+            if name in vecs:
+                raise ValueError(f"Ya existe un vector llamado '{name}'. Usa un nombre distinto para la matriz.")
+        except Exception:
+            # si falla la carga de vectores, continuamos sin bloquear (no crítico)
+            pass
         path = Matrices._get_storage_path()
         cur = Matrices.load_saved_matrices()
         cur[name] = matrix

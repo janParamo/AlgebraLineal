@@ -537,27 +537,38 @@ class OperacionesMatricesGui(QWidget):
         if not expr:
             QMessageBox.warning(self, "Error", "Ingresa una ecuación. Ej: (A*B)^T + C")
             return
-        saved = Matrices.load_saved_matrices()
+        saved_mats = Matrices.load_saved_matrices()
+        saved_vecs = load_saved_vectors()
         # Soportar igualdad: LHS = RHS
         if '=' in expr:
             lhs_str, rhs_str = expr.split('=', 1)
             lhs_str = lhs_str.strip()
             rhs_str = rhs_str.strip()
             try:
-                lhs_val, lhs_steps, lhs_used = self._eval_matrix_expression(lhs_str, saved)
-                rhs_val, rhs_steps, rhs_used = self._eval_matrix_expression(rhs_str, saved)
+                lhs_val, lhs_steps, lhs_used = self._eval_matrix_expression(lhs_str, saved_mats, saved_vecs)
+                rhs_val, rhs_steps, rhs_used = self._eval_matrix_expression(rhs_str, saved_mats, saved_vecs)
             except Exception as e:
                 QMessageBox.critical(self, "Error al resolver ecuación", str(e))
                 return
             # Construir salida detallada con pasos de ambos lados
             out: list[str] = []
-            # Encabezado único de matrices usadas (unión de ambos lados)
-            used_all = {**lhs_used, **rhs_used}
-            if used_all:
-                out.append("Matrices usadas:")
-                for nm in sorted(used_all.keys()):
-                    out.append(f"{nm}:")
-                    out.append(Matrices._mat_to_str_frac(used_all[nm]))
+            # Encabezado único de símbolos usados (matrices y vectores)
+            used_mats_all = {**lhs_used.get('matrices', {}), **rhs_used.get('matrices', {})}
+            used_vecs_all = {**lhs_used.get('vectores', {}), **rhs_used.get('vectores', {})}
+            if used_mats_all or used_vecs_all:
+                out.append("Símbolos usados:")
+                if used_mats_all:
+                    out.append("Matrices:")
+                    for nm in sorted(used_mats_all.keys()):
+                        out.append(f"{nm}:")
+                        out.append(Matrices._mat_to_str_frac(used_mats_all[nm]))
+                if used_vecs_all:
+                    out.append("Vectores:")
+                    for nm in sorted(used_vecs_all.keys()):
+                        out.append(f"{nm}:")
+                        # mostrar vector como columna para consistencia
+                        col = [[v] for v in used_vecs_all[nm]]
+                        out.append(Matrices._mat_to_str_frac(col))
                 out.append("")
             out.append(f"Lado izquierdo: {lhs_str}")
             out.extend(lhs_steps)
@@ -573,12 +584,9 @@ class OperacionesMatricesGui(QWidget):
             out.append(f"¿Se cumple la igualdad LHS = RHS? -> {'SI' if iguales else 'NO'}")
             self.result_text.setPlainText("\n".join(out))
             # Ofrecer guardar resultados izquierdo y/o derecho con nombres sugeridos
-            # Sugerencias simples basadas en etiquetas
-            from re import sub
-            def sanitize(name: str) -> str:
-                return sub(r"[^A-Za-z0-9_\-]", "_", name)[:50] or "resultado"
-            left_suggest = sanitize(f"lhs_{lhs_str}")
-            right_suggest = sanitize(f"rhs_{rhs_str}")
+            # Sugerencia: usar exactamente la fórmula de cada lado
+            left_suggest = lhs_str
+            right_suggest = rhs_str
             # Guardar lado izquierdo
             text, ok = QInputDialog.getText(self, "Guardar LHS",
                                             "Nombre para guardar el lado izquierdo (puedes editar):",
@@ -605,16 +613,26 @@ class OperacionesMatricesGui(QWidget):
             return
         # Caso sin igualdad: mostrar pasos del cálculo de la expresión
         try:
-            res, pasos, used = self._eval_matrix_expression(expr, saved)
+            res, pasos, used = self._eval_matrix_expression(expr, saved_mats, saved_vecs)
         except Exception as e:
             QMessageBox.critical(self, "Error al resolver ecuación", str(e))
             return
         out: list[str] = []
-        if used:
-            out.append("Matrices usadas:")
-            for nm in sorted(used.keys()):
-                out.append(f"{nm}:")
-                out.append(Matrices._mat_to_str_frac(used[nm]))
+        used_m = used.get('matrices', {})
+        used_v = used.get('vectores', {})
+        if used_m or used_v:
+            out.append("Símbolos usados:")
+            if used_m:
+                out.append("Matrices:")
+                for nm in sorted(used_m.keys()):
+                    out.append(f"{nm}:")
+                    out.append(Matrices._mat_to_str_frac(used_m[nm]))
+            if used_v:
+                out.append("Vectores:")
+                for nm in sorted(used_v.keys()):
+                    out.append(f"{nm}:")
+                    col = [[v] for v in used_v[nm]]
+                    out.append(Matrices._mat_to_str_frac(col))
             out.append("")
         out.extend(pasos)
         out.append("Resultado final de la expresión:")
@@ -626,16 +644,16 @@ class OperacionesMatricesGui(QWidget):
         text, ok = QInputDialog.getText(self, "Guardar resultado",
                                         "Nombre para guardar (puedes editar):",
                                         QLineEdit.EchoMode.Normal,
-                                        suggest)
+                                        expr)
         if ok:
-            final = text.strip() or suggest
+            final = text.strip() or expr
             try:
                 Matrices.save_matrix(final, res)
                 self.reload_saved()
             except Exception as e:
                 QMessageBox.critical(self, "Error al guardar", str(e))
 
-    def _eval_matrix_expression(self, expr: str, saved: dict):
+    def _eval_matrix_expression(self, expr: str, saved_mats: dict, saved_vecs: dict):
         # Gramática extendida con escalares, transpuesta e inversa (postfijas):
         #   Expr   := Term (('+'|'-') Term)*
         #   Term   := Unary ( '*' Unary )*
@@ -651,6 +669,7 @@ class OperacionesMatricesGui(QWidget):
         s = expr
         i = 0
         used_mats: dict[str, list[list[float]]] = {}
+        used_vecs: dict[str, list[float]] = {}
 
         def skip_ws():
             nonlocal i
@@ -673,7 +692,7 @@ class OperacionesMatricesGui(QWidget):
             return c
 
         def parse_ident():
-            nonlocal i, used_mats
+            nonlocal i, used_mats, used_vecs
             skip_ws()
             if i >= len(s) or not (s[i].isalpha() or s[i]=='_'):
                 raise ValueError(f"Se esperaba un nombre de matriz en la posición {i+1}.")
@@ -738,12 +757,18 @@ class OperacionesMatricesGui(QWidget):
             # identificador
             i = pos_before
             name = parse_ident()
-            if name not in saved:
-                raise ValueError(f"Matriz '{name}' no existe en guardadas.")
-            mat = saved[name]
-            # Registrar uso de matriz pero no repetir impresión en pasos
-            used_mats[name] = mat
-            return ('matrix', mat, []) 
+            # Resolver como matriz o vector según existan
+            if name in saved_mats and name in saved_vecs:
+                raise ValueError(f"Existe una matriz y un vector con el mismo nombre '{name}'. Cambia uno de los nombres.")
+            if name in saved_mats:
+                mat = saved_mats[name]
+                used_mats[name] = mat
+                return ('matrix', mat, [])
+            if name in saved_vecs:
+                vec = saved_vecs[name]
+                used_vecs[name] = vec
+                return ('vector', vec, [])
+            raise ValueError(f"Símbolo '{name}' no existe en guardados (matrices o vectores).")
 
         def as_mat(val):
             if val[0] != 'matrix':
@@ -761,6 +786,9 @@ class OperacionesMatricesGui(QWidget):
         def to_matrix(val):
             return val[0] == 'matrix'
 
+        def to_vector(val):
+            return val[0] == 'vector'
+
         def steps_of(val):
             return val[2] if len(val) > 2 else []
 
@@ -769,6 +797,9 @@ class OperacionesMatricesGui(QWidget):
 
         def wrap_scalar(x, steps=None):
             return ('scalar', float(x), steps or [])
+
+        def wrap_vector(v, steps=None):
+            return ('vector', [float(x) for x in v], steps or [])
 
         def mat_add(x, y):
             if not (to_matrix(x) and to_matrix(y)):
@@ -782,6 +813,30 @@ class OperacionesMatricesGui(QWidget):
             res, p = Matrices.subtract_with_steps(as_mat(x), as_mat(y))
             return wrap_matrix(res, steps_of(x) + steps_of(y) + p)
 
+        def vec_add(x, y):
+            vx, vy = x[1], y[1]
+            if len(vx) != len(vy):
+                raise ValueError("Los vectores deben tener la misma longitud para suma/resta.")
+            steps = [f"Sumando vectores de longitud {len(vx)}:"]
+            res = []
+            for i in range(len(vx)):
+                s_val = float(vx[i]) + float(vy[i])
+                steps.append(f"w[{i+1}] = {format_val(vx[i])} + {format_val(vy[i])} = {format_val(s_val)}")
+                res.append(s_val)
+            return wrap_vector(res, steps_of(x) + steps_of(y) + steps)
+
+        def vec_sub(x, y):
+            vx, vy = x[1], y[1]
+            if len(vx) != len(vy):
+                raise ValueError("Los vectores deben tener la misma longitud para suma/resta.")
+            steps = [f"Restando vectores de longitud {len(vx)}:"]
+            res = []
+            for i in range(len(vx)):
+                d_val = float(vx[i]) - float(vy[i])
+                steps.append(f"w[{i+1}] = {format_val(vx[i])} - {format_val(vy[i])} = {format_val(d_val)}")
+                res.append(d_val)
+            return wrap_vector(res, steps_of(x) + steps_of(y) + steps)
+
         def mat_mul(x, y):
             # mat*mat, mat*scalar, scalar*mat
             if to_matrix(x) and to_matrix(y):
@@ -793,11 +848,46 @@ class OperacionesMatricesGui(QWidget):
             if to_scalar(x) and to_matrix(y):
                 res, p = Matrices.multiply_scalar_with_steps(as_mat(y), as_scalar(x))
                 return wrap_matrix(res, steps_of(x) + steps_of(y) + p)
+            if to_matrix(x) and to_vector(y):
+                # A (n x m) * v (m) => vector w (n)
+                col = [[float(v)] for v in y[1]]
+                mat_res, p = Matrices.multiply_with_steps(as_mat(x), col)
+                # convertir resultado (n x 1) a vector
+                vec_res = [row[0] for row in mat_res]
+                steps = p + ["Vector resultado (como columna):", Matrices._mat_to_str_frac(col),
+                             "Vector resultado (plano):"] + ["[ " + ", ".join(format_val(z) for z in vec_res) + " ]"]
+                return wrap_vector(vec_res, steps_of(x) + steps_of(y) + steps)
+            if to_scalar(x) and to_vector(y):
+                k = as_scalar(x)
+                vy = y[1]
+                steps = [f"Escalando vector por {format_val(k)}:"]
+                res = []
+                for i, val in enumerate(vy):
+                    r = k * float(val)
+                    steps.append(f"w[{i+1}] = {format_val(k)}*{format_val(val)} = {format_val(r)}")
+                    res.append(r)
+                return wrap_vector(res, steps_of(x) + steps_of(y) + steps)
+            if to_vector(x) and to_scalar(y):
+                k = as_scalar(y)
+                vx = x[1]
+                steps = [f"Escalando vector por {format_val(k)}:"]
+                res = []
+                for i, val in enumerate(vx):
+                    r = k * float(val)
+                    steps.append(f"w[{i+1}] = {format_val(k)}*{format_val(val)} = {format_val(r)}")
+                    res.append(r)
+                return wrap_vector(res, steps_of(x) + steps_of(y) + steps)
             raise ValueError("Multiplicación inválida: no se admite escalar*escalar en expresiones matriciales.")
 
         def mat_transpose(x):
             if not to_matrix(x):
-                raise ValueError("La transpuesta sólo aplica a matrices.")
+                # permitir transpuesta de vector -> matriz fila 1xn
+                if to_vector(x):
+                    row = [x[1][:]]
+                    steps = steps_of(x) + ["Transponiendo vector (columna -> fila):", Matrices._mat_to_str_frac([[v] for v in x[1]]),
+                                            "Vector fila:", Matrices._mat_to_str_frac(row)]
+                    return wrap_matrix(row, steps)
+                raise ValueError("La transpuesta sólo aplica a matrices o vectores.")
             t, p = Matrices.transpose_with_steps(as_mat(x))
             return wrap_matrix(t, steps_of(x) + p)
 
@@ -855,6 +945,16 @@ class OperacionesMatricesGui(QWidget):
                     return wrap_matrix(res, steps_of(val) + p)
                 if to_scalar(val):
                     return wrap_scalar(-as_scalar(val), steps_of(val) + ["Aplicando signo unario a escalar"]) 
+                if to_vector(val):
+                    k = -1.0
+                    vx = val[1]
+                    steps = ["Aplicando signo unario a vector:"]
+                    res = []
+                    for i, v in enumerate(vx):
+                        r = -float(v)
+                        steps.append(f"w[{i+1}] = -1*{format_val(v)} = {format_val(r)}")
+                        res.append(r)
+                    return wrap_vector(res, steps_of(val) + steps)
                 raise ValueError("Signo unario inválido.")
             return parse_factor()
 
@@ -876,11 +976,21 @@ class OperacionesMatricesGui(QWidget):
                 if c == '+':
                     consume('+')
                     rhs = parse_term()
-                    val = mat_add(val, rhs)
+                    if to_matrix(val) and to_matrix(rhs):
+                        val = mat_add(val, rhs)
+                    elif to_vector(val) and to_vector(rhs):
+                        val = vec_add(val, rhs)
+                    else:
+                        raise ValueError("La suma sólo está definida entre dos matrices o dos vectores del mismo tamaño.")
                 elif c == '-':
                     consume('-')
                     rhs = parse_term()
-                    val = mat_sub(val, rhs)
+                    if to_matrix(val) and to_matrix(rhs):
+                        val = mat_sub(val, rhs)
+                    elif to_vector(val) and to_vector(rhs):
+                        val = vec_sub(val, rhs)
+                    else:
+                        raise ValueError("La resta sólo está definida entre dos matrices o dos vectores del mismo tamaño.")
                 else:
                     break
             return val
@@ -888,9 +998,10 @@ class OperacionesMatricesGui(QWidget):
         result = parse_expr()
         if i < len(s):
             raise ValueError(f"Símbolo inesperado cerca de '{s[i:]}'")
-        if not (result[0] == 'matrix'):
-            raise ValueError("La expresión resultó en un escalar; se esperaba una matriz.")
-        return result[1], steps_of(result), used_mats
+        if result[0] == 'scalar':
+            raise ValueError("La expresión resultó en un escalar; se esperaba una matriz o un vector.")
+        used = {'matrices': used_mats, 'vectores': used_vecs}
+        return result[1], steps_of(result), used
     def multiply_selected(self):
         a_name = self.sel_a.text().strip()
         b_name = self.sel_b.text().strip()

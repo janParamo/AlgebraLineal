@@ -369,6 +369,15 @@ def load_saved_vectors() -> dict:
 def save_vector(name: str, vector: List[float]):
     if not name or not isinstance(name, str):
         raise ValueError("El nombre debe ser una cadena no vacía.")
+    # Validar que no exista una matriz con el mismo nombre
+    try:
+        from models.Matrices import Matrices  # lazy import para evitar ciclos
+        mats = Matrices.load_saved_matrices()
+        if name in mats:
+            raise ValueError(f"Ya existe una matriz llamada '{name}'. Usa un nombre distinto para el vector.")
+    except Exception:
+        # si falla la carga de matrices, continuamos sin bloquear (no crítico)
+        pass
     path = _get_vectors_storage_path()
     cur = load_saved_vectors()
     cur[name] = vector
