@@ -101,17 +101,17 @@ class Matrices:
             if abs(piv - 1) > EPS:
                 for j in range(m+1):
                     augmented[col][j] /= piv
-                pasos.append(f"f{col+1} --> (1/{piv:.4f})*f{col+1}")
-                pasos.append(Matrices._mat_to_str(augmented))
+                pasos.append(f"f{col+1} --> {format_val(1.0/piv)}*f{col+1}")
+                pasos.append(Matrices._mat_to_str_frac(augmented))
             for row in range(col+1, n):
                 factor = augmented[row][col]
                 if abs(factor) > EPS:
                     for j in range(m+1):
                         augmented[row][j] -= factor * augmented[col][j]
                     signo = "+" if factor > 0 else "-"
-                    pasos.append(f"f{row+1} --> f{row+1} {signo} ({abs(factor):.4f})*f{col+1}")
-                    pasos.append(Matrices._mat_to_str(augmented))
-        pasos.append("Estado final:\n" + Matrices._mat_to_str(augmented))
+                    pasos.append(f"f{row+1} --> f{row+1} {signo} ({format_val(abs(factor))})*f{col+1}")
+                    pasos.append(Matrices._mat_to_str_frac(augmented))
+        pasos.append("Estado final:\n" + Matrices._mat_to_str_frac(augmented))
         return GaussResult(pasos, augmented, pivotes)
 
     @staticmethod
@@ -135,26 +135,26 @@ class Matrices:
             if sel != row:
                 augmented[row], augmented[sel] = augmented[sel], augmented[row]
                 pasos.append(f"Intercambio de fila {row+1} con fila {sel+1}")
-                pasos.append(Matrices._mat_to_str(augmented))
+                pasos.append(Matrices._mat_to_str_frac(augmented))
             pivotes.append((row, col))
             piv = augmented[row][col]
             if abs(piv - 1) > EPS:
                 for j in range(m+1):
                     augmented[row][j] /= piv
-                pasos.append(f"f{row+1} --> (1/{piv:.4f})*f{row+1}")
-                pasos.append(Matrices._mat_to_str(augmented))
+                pasos.append(f"f{row+1} --> {format_val(1.0/piv)}*f{row+1}")
+                pasos.append(Matrices._mat_to_str_frac(augmented))
             for r in range(n):
                 if r != row and abs(augmented[r][col]) > EPS:
                     factor = augmented[r][col]
                     for j in range(m+1):
                         augmented[r][j] -= factor * augmented[row][j]
                     signo = "+" if factor > 0 else "-"
-                    pasos.append(f"f{r+1} --> f{r+1} {signo} ({abs(factor):.4f})*f{row+1}")
-                    pasos.append(Matrices._mat_to_str(augmented))
+                    pasos.append(f"f{r+1} --> f{r+1} {signo} ({format_val(abs(factor))})*f{row+1}")
+                    pasos.append(Matrices._mat_to_str_frac(augmented))
             row += 1
             if row == n:
                 break
-        pasos.append("Estado final:\n" + Matrices._mat_to_str(augmented))
+        pasos.append("Estado final:\n" + Matrices._mat_to_str_frac(augmented))
         return GaussResult(pasos, augmented, pivotes)
 
     @staticmethod

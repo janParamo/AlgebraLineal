@@ -1,6 +1,49 @@
 from typing import List
 import json
 import os
+from fractions import Fraction
+
+
+def _to_fraction(x) -> Fraction:
+    if isinstance(x, Fraction):
+        return x
+    try:
+        return Fraction(x)
+    except Exception:
+        # Fallback to string conversion
+        return Fraction(str(x))
+
+
+def _format_val(x) -> str:
+    if isinstance(x, Fraction):
+        if x.denominator == 1:
+            return str(x.numerator)
+        return f"{x.numerator}/{x.denominator}"
+    if isinstance(x, (int,)):
+        return str(x)
+    try:
+        fx = Fraction(x).limit_denominator()
+        if fx.denominator == 1:
+            return str(fx.numerator)
+        return f"{fx.numerator}/{fx.denominator}"
+    except Exception:
+        return str(x)
+
+
+def _mat_to_str_frac(m: List[List[Fraction]]) -> str:
+    return "\n".join(
+        " | ".join(_format_val(x) for x in fila)
+        for fila in m
+    )
+
+
+def _is_zero(x) -> bool:
+    if isinstance(x, Fraction):
+        return x == 0
+    try:
+        return abs(float(x)) < 1e-12
+    except Exception:
+        return False
 
 class Vector:
     def __init__(self, datos: List[float]):
@@ -22,7 +65,7 @@ class Vector:
         return Vector([float(str(a).replace(',', '').replace('.', '')) for a in self.datos])
 
     def mostrar(self):
-        return str(self.datos)
+        return "[" + ", ".join(_format_val(_to_fraction(x)) for x in self.datos) + "]"
 
 def solucionMatrizVector(vectores: list[list[float]]) -> str:
     """
@@ -31,24 +74,19 @@ def solucionMatrizVector(vectores: list[list[float]]) -> str:
     Al final, muestra el proceso explícito de combinación lineal, usando la reducción ya realizada.
     """
     import copy
-    matriz = [v[:] for v in vectores]
+    # Convertir a Fracciones para operaciones exactas y formato fracción
+    matriz = [[_to_fraction(val) for val in fila] for fila in vectores]
     filas = len(matriz)
     columnas = len(matriz[0]) if filas > 0 else 0
 
-    def clean(x):
-        return 0.0 if abs(x) < 1e-10 else x
-
     def matriz_str(m):
-        return "\n".join(
-            " | ".join(f"{clean(x):8.4f}" for x in fila)
-            for fila in m
-        )
+        return _mat_to_str_frac(m)
 
     proceso = []
     proceso.append("Matriz inicial:")
     proceso.append(matriz_str(matriz))
 
-    es_homogenea = all(abs(fila[-1]) < 1e-10 for fila in matriz)
+    es_homogenea = all(_is_zero(fila[-1]) for fila in matriz)
     proceso.append("\n¿Es homogénea?: " + ("Sí" if es_homogenea else "No"))
 
     A = copy.deepcopy(matriz)
@@ -61,7 +99,7 @@ def solucionMatrizVector(vectores: list[list[float]]) -> str:
         # Buscar el pivote
         sel = None
         for i in range(row, n):
-            if abs(A[i][col]) > 1e-10:
+            if not _is_zero(A[i][col]):
                 sel = i
                 break
         if sel is None:
@@ -74,22 +112,20 @@ def solucionMatrizVector(vectores: list[list[float]]) -> str:
             proceso.append(matriz_str(A))
         # Normalizar la fila del pivote
         piv = A[row][col]
-        if abs(piv) < 1e-10:
+        if _is_zero(piv):
             proceso.append(f"\nNo se puede dividir por cero en la fila {row+1}.")
             continue
-        if abs(piv - 1.0) > 1e-10:
-            proceso.append(f"\nf{row+1} --> (1/{piv:.4f})*f{row+1}")
-            A[row] = [aij / piv if abs(piv) > 1e-10 else 0.0 for aij in A[row]]
-            A[row] = [clean(x) for x in A[row]]
+        if piv != 1:
+            proceso.append(f"\nf{row+1} --> (1/{_format_val(piv)})*f{row+1}")
+            A[row] = [aij / piv if not _is_zero(piv) else Fraction(0) for aij in A[row]]
             proceso.append(matriz_str(A))
         # Hacer ceros en la columna del pivote
         for i in range(n):
-            if i != row and abs(A[i][col]) > 1e-10:
+            if i != row and not _is_zero(A[i][col]):
                 factor = A[i][col]
                 signo = "+" if factor > 0 else "-"
-                proceso.append(f"\nf{i+1} --> f{i+1} {signo} ({abs(factor):.4f})*f{row+1}")
+                proceso.append(f"\nf{i+1} --> f{i+1} {signo} ({_format_val(abs(factor))})*f{row+1}")
                 A[i] = [aij - factor * arj for aij, arj in zip(A[i], A[row])]
-                A[i] = [clean(x) for x in A[i]]
                 proceso.append(matriz_str(A))
         pivots.append(col)
         row += 1
@@ -114,7 +150,7 @@ def solucionMatrizVector(vectores: list[list[float]]) -> str:
     else:
         inconsistente = False
         for fila in A:
-            if all(abs(fila[j]) < 1e-10 for j in range(m-1)) and abs(fila[-1]) > 1e-10:
+            if all(_is_zero(fila[j]) for j in range(m-1)) and not _is_zero(fila[-1]):
                 inconsistente = True
                 break
         if inconsistente:
@@ -122,8 +158,8 @@ def solucionMatrizVector(vectores: list[list[float]]) -> str:
         elif len(libres) > 0:
             proceso.append("El sistema tiene infinitas soluciones (parámetros libres).")
         else:
-            sol = [clean(fila[-1]) for fila in A]
-            proceso.append(f"Solución única: {sol}")
+            sol = [fila[-1] for fila in A]
+            proceso.append("Solución única: [" + ", ".join(_format_val(x) for x in sol) + "]")
 
     # --- Proceso explícito de combinación lineal ---
     proceso.append("\n--- Proceso explícito de combinación lineal ---")
@@ -146,7 +182,7 @@ def solucionMatrizVector(vectores: list[list[float]]) -> str:
     for col in range(n_coef):
         found = False
         for i in range(row_coef, m_coef):
-            if abs(A_coef[i][col]) > 1e-10:
+            if not _is_zero(A_coef[i][col]):
                 found = True
                 pivots_coef.append(col)
                 row_coef += 1
@@ -174,17 +210,17 @@ def solucionMatrizVector(vectores: list[list[float]]) -> str:
             suma = 0
             for j in libres_coef:
                 suma += -A_coef[i][j] * valores_c[j]
-            valores_c[col] = suma / A_coef[i][col] if abs(A_coef[i][col]) > 1e-10 else 0
-        valores_c = [0 if abs(x) < 1e-10 else x for x in valores_c]
+            valores_c[col] = suma / A_coef[i][col] if not _is_zero(A_coef[i][col]) else 0
+        valores_c = [Fraction(0) if _is_zero(x) else _to_fraction(x) for x in valores_c]
         proceso.append("Una combinación lineal no trivial es:")
-        proceso.append("  " + ", ".join([f"c{j+1} = {valores_c[j]:.4f}" for j in range(num_vars)]))
+        proceso.append("  " + ", ".join([f"c{j+1} = {_format_val(valores_c[j])}" for j in range(num_vars)]))
     # 3. Reemplazar en la combinación lineal y mostrar el resultado
     proceso.append("\nReemplazando en la combinación lineal:")
     for i in range(len(vectores[0])):
         suma = sum(valores_c[j] * vectores[j][i] for j in range(num_vars))
-        proceso.append("  " + " + ".join([f"{valores_c[j]:.4f}·{vectores[j][i]:.4f}" for j in range(num_vars)]) + f" = {suma:.4f}")
+        proceso.append("  " + " + ".join([f"{_format_val(valores_c[j])}·{_format_val(vectores[j][i])}" for j in range(num_vars)]) + f" = {_format_val(suma)}")
     # 4. Verificar si da 0=0 en todas las componentes
-    if all(abs(sum(valores_c[j] * vectores[j][i] for j in range(num_vars))) < 1e-8 for i in range(len(vectores[0]))):
+    if all(_is_zero(sum(valores_c[j] * vectores[j][i] for j in range(num_vars))) for i in range(len(vectores[0]))):
         proceso.append("\nLa combinación lineal da 0=0 en todas las componentes.")
         if not libres_coef:
             proceso.append("Por lo tanto, los vectores son LINEALMENTE INDEPENDIENTES.")
@@ -212,7 +248,7 @@ def dependencia_lineal(vectores: List[List[float]]) -> bool:
     for col in range(m):
         sel = None
         for i in range(row, n):
-            if abs(A[i][col]) > 1e-10:
+            if not _is_zero(A[i][col]):
                 sel = i
                 break
         if sel is None:
@@ -220,11 +256,11 @@ def dependencia_lineal(vectores: List[List[float]]) -> bool:
         if sel != row:
             A[row], A[sel] = A[sel], A[row]
         piv = A[row][col]
-        if abs(piv) < 1e-10:
+        if _is_zero(piv):
             continue
         A[row] = [aij / piv for aij in A[row]]
         for i in range(n):
-            if i != row and abs(A[i][col]) > 1e-10:
+            if i != row and not _is_zero(A[i][col]):
                 factor = A[i][col]
                 A[i] = [aij - factor * arj for aij, arj in zip(A[i], A[row])]
         pivots.append(col)
@@ -256,7 +292,7 @@ def dependencia_lineal_pasos(vectores: List[List[float]]) -> str:
     for col in range(m):
         sel = None
         for i in range(row, n):
-            if abs(A[i][col]) > 1e-10:
+            if not _is_zero(A[i][col]):
                 sel = i
                 break
         if sel is None:
@@ -266,17 +302,17 @@ def dependencia_lineal_pasos(vectores: List[List[float]]) -> str:
             pasos.append(f"f{row+1} <-> f{sel+1}")
             A[row], A[sel] = A[sel], A[row]
         piv = A[row][col]
-        if abs(piv) < 1e-10:
+        if _is_zero(piv):
             pasos.append(f"No se puede dividir por cero en la fila {row+1}.")
             continue
-        if abs(piv - 1.0) > 1e-10:
-            pasos.append(f"f{row+1} --> (1/{piv:.4f})*f{row+1}")
+        if piv != 1:
+            pasos.append(f"f{row+1} --> (1/{_format_val(piv)})*f{row+1}")
             A[row] = [aij / piv for aij in A[row]]
         for i in range(n):
-            if i != row and abs(A[i][col]) > 1e-10:
+            if i != row and not _is_zero(A[i][col]):
                 factor = A[i][col]
                 signo = "+" if factor > 0 else "-"
-                pasos.append(f"f{i+1} --> f{i+1} {signo} ({abs(factor):.4f})*f{row+1}")
+                pasos.append(f"f{i+1} --> f{i+1} {signo} ({_format_val(abs(factor))})*f{row+1}")
                 A[i] = [aij - factor * arj for aij, arj in zip(A[i], A[row])]
         pivots.append(col)
         row += 1
