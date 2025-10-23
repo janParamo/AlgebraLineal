@@ -5,7 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from typing import List
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QListWidget, QMessageBox, QGridLayout, QTextEdit, QGroupBox, QSizePolicy, QInputDialog, QComboBox
+    QLineEdit, QListWidget, QMessageBox, QGridLayout, QTextEdit, QGroupBox, QSizePolicy, QInputDialog, QComboBox, QCheckBox
 )
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt, qInstallMessageHandler
@@ -175,6 +175,22 @@ class OperacionesMatricesGui(QWidget):
         self.btn_execute = QPushButton("Ejecutar")
         self.btn_execute.clicked.connect(self.operate_selected)
         sel_layout.addWidget(self.btn_execute)
+        # Checkbox para mostrar/ocultar pasos
+        self.chk_show_steps = QCheckBox("Mostrar pasos")
+        self.chk_show_steps.setToolTip("Alterna la visualización de procedimientos detallados")
+        self.chk_show_steps.setChecked(True)
+        sel_layout.addWidget(self.chk_show_steps)
+        # Checkbox para colapsar salidas largas
+        self.chk_collapse = QCheckBox("Colapsar pasos largos")
+        self.chk_collapse.setToolTip("Muestra solo un resumen cuando los pasos son muy extensos")
+        self.chk_collapse.setChecked(False)
+        sel_layout.addWidget(self.chk_collapse)
+        # Estado de última salida para re-renderizar en tiempo real
+        self._last_full_text = None
+        self._last_compact_text = None
+        # Re-render en tiempo real al cambiar toggles
+        self.chk_show_steps.stateChanged.connect(lambda _: self._rerender_last())
+        self.chk_collapse.stateChanged.connect(lambda _: self._rerender_last())
         right.addLayout(sel_layout)
 
         # segunda fila: controles de vector y escalar para evitar solapamiento
@@ -230,6 +246,52 @@ class OperacionesMatricesGui(QWidget):
         self.setLayout(layout)
 
         self.reload_saved()
+
+    # ---------------- Utilidades de salida ----------------
+    def _set_result_text(self, content):
+        """Imprime en el panel de resultados. Si 'Mostrar pasos' está activo y
+        'Colapsar pasos largos' también, comprime salidas muy extensas mostrando
+        el inicio y el final con un indicador de líneas ocultas.
+        Acepta una lista de líneas o un string completo.
+        """
+        if isinstance(content, list):
+            text = "\n".join(content)
+        else:
+            text = str(content)
+        # Colapsar solo cuando corresponde
+        if getattr(self, 'chk_show_steps', None) and self.chk_show_steps.isChecked() \
+           and getattr(self, 'chk_collapse', None) and self.chk_collapse.isChecked():
+            lines = text.splitlines()
+            max_lines = 180
+            if len(lines) > max_lines:
+                head = 120
+                tail = 60
+                hidden = len(lines) - head - tail
+                if hidden > 0:
+                    marker = f"[… {hidden} líneas ocultas …] (desmarca 'Colapsar pasos largos' para ver todo)"
+                    text = "\n".join(lines[:head] + [marker] + lines[-tail:])
+        self.result_text.setPlainText(text)
+
+    def _store_and_render(self, full_content, compact_content):
+        """Guarda las variantes detallada y compacta y muestra la adecuada.
+        full_content y compact_content pueden ser list[str] o str.
+        """
+        def to_text(c):
+            if isinstance(c, list):
+                return "\n".join(c)
+            return str(c)
+        self._last_full_text = to_text(full_content) if full_content is not None else None
+        self._last_compact_text = to_text(compact_content) if compact_content is not None else None
+        self._rerender_last()
+
+    def _rerender_last(self):
+        """Vuelve a pintar el último resultado usando el estado actual de los toggles."""
+        if self.chk_show_steps.isChecked():
+            base = self._last_full_text if self._last_full_text is not None else self._last_compact_text
+        else:
+            base = self._last_compact_text if self._last_compact_text is not None else self._last_full_text
+        if base is not None:
+            self._set_result_text(base)
 
     def generate_fields(self):
         try:
@@ -288,7 +350,7 @@ class OperacionesMatricesGui(QWidget):
             return
         try:
             Matrices.save_matrix(name, mat)
-            self.result_text.setPlainText(f"Matriz '{name}' guardada correctamente.")
+            self._set_result_text(f"Matriz '{name}' guardada correctamente.")
             self.reload_saved()
         except Exception as e:
             QMessageBox.critical(self, "Error al guardar", str(e))
@@ -337,7 +399,7 @@ class OperacionesMatricesGui(QWidget):
         txt = f"Matriz '{name}' ({len(mat)}x{len(mat[0]) if mat else 0}):\n"
         for row in mat:
             txt += "[ " + ", ".join(format_val(x) for x in row) + " ]\n"
-        self.result_text.setPlainText(txt)
+        self._set_result_text(txt)
 
         # opcional: volcar a campos de entrada
         r = len(mat)
@@ -419,7 +481,10 @@ class OperacionesMatricesGui(QWidget):
             # res es n x 1
             pasos.append('Resultado vector columna:')
             pasos.append('\n'.join(format_val(row[0]) for row in res))
-            self.result_text.setPlainText('\n'.join(pasos))
+            full_text = '\n'.join(pasos)
+            plano = [row[0] for row in res]
+            compact_text = 'Resultado vector:\n[ ' + ', '.join(format_val(x) for x in plano) + ' ]'
+            self._store_and_render(full_text, compact_text)
         except Exception as e:
             QMessageBox.critical(self, 'Error al multiplicar', str(e))
 
@@ -443,7 +508,8 @@ class OperacionesMatricesGui(QWidget):
             self.vectors_list.clear()
             for nm, vec in sorted(self.saved_vectors.items()):
                 self.vectors_list.addItem(f"{nm}  ({len(vec)})")
-            self.result_text.setPlainText(f"Vector '{name.strip()}' guardado.")
+            msg = f"Vector '{name.strip()}' guardado."
+            self._store_and_render(msg, msg)
         except Exception as e:
             QMessageBox.critical(self, 'Error al guardar vector', str(e))
 
@@ -458,7 +524,8 @@ class OperacionesMatricesGui(QWidget):
             self.vectors_list.clear()
             for nm, vec in sorted(self.saved_vectors.items()):
                 self.vectors_list.addItem(f"{nm}  ({len(vec)})")
-            self.result_text.setPlainText(f"Vector '{name}' eliminado.")
+            msg = f"Vector '{name}' eliminado."
+            self._store_and_render(msg, msg)
 
     def _load_vector_into_input(self, item):
         name = item.text().split('  ')[0]
@@ -503,7 +570,10 @@ class OperacionesMatricesGui(QWidget):
             res, pasos = Matrices.multiply_with_steps(a, b)
             pasos.append('Resultado vector columna:')
             pasos.append('\n'.join(format_val(row[0]) for row in res))
-            self.result_text.setPlainText('\n'.join(pasos))
+            full_text = '\n'.join(pasos)
+            plano = [row[0] for row in res]
+            compact_text = 'Resultado vector:\n[ ' + ', '.join(format_val(x) for x in plano) + ' ]'
+            self._store_and_render(full_text, compact_text)
         except Exception as e:
             QMessageBox.critical(self, 'Error al multiplicar', str(e))
 
@@ -520,9 +590,10 @@ class OperacionesMatricesGui(QWidget):
         mat = saved[name]
         try:
             t, pasos = Matrices.transpose_with_steps(mat)
-            # multiply_with_steps already formats intermediate values via format_val, but ensure final display uses format_val
-            # pasos is already a list of strings; show as-is
-            self.result_text.setPlainText("\n".join(pasos))
+            out = pasos + ["Transpuesta:", Matrices._mat_to_str_frac(t)]
+            full_text = "\n".join(out)
+            compact_text = "Transpuesta:\n" + Matrices._mat_to_str_frac(t)
+            self._store_and_render(full_text, compact_text)
             reply = QMessageBox.question(self, "Guardar transpuesta", f"¿Guardar transpuesta como '{name}_T'?",
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:
@@ -550,39 +621,46 @@ class OperacionesMatricesGui(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error al resolver ecuación", str(e))
                 return
-            # Construir salida detallada con pasos de ambos lados
-            out: list[str] = []
-            # Encabezado único de símbolos usados (matrices y vectores)
+            # Construir salida (detallada y resumida) y guardarla para re-render
             used_mats_all = {**lhs_used.get('matrices', {}), **rhs_used.get('matrices', {})}
             used_vecs_all = {**lhs_used.get('vectores', {}), **rhs_used.get('vectores', {})}
+            full_out: list[str] = []
             if used_mats_all or used_vecs_all:
-                out.append("Símbolos usados:")
+                full_out.append("Símbolos usados:")
                 if used_mats_all:
-                    out.append("Matrices:")
+                    full_out.append("Matrices:")
                     for nm in sorted(used_mats_all.keys()):
-                        out.append(f"{nm}:")
-                        out.append(Matrices._mat_to_str_frac(used_mats_all[nm]))
+                        full_out.append(f"{nm}:")
+                        full_out.append(Matrices._mat_to_str_frac(used_mats_all[nm]))
                 if used_vecs_all:
-                    out.append("Vectores:")
+                    full_out.append("Vectores:")
                     for nm in sorted(used_vecs_all.keys()):
-                        out.append(f"{nm}:")
-                        # mostrar vector como columna para consistencia
+                        full_out.append(f"{nm}:")
                         col = [[v] for v in used_vecs_all[nm]]
-                        out.append(Matrices._mat_to_str_frac(col))
-                out.append("")
-            out.append(f"Lado izquierdo: {lhs_str}")
-            out.extend(lhs_steps)
-            out.append("Resultado izquierdo:")
-            out.append(Matrices._mat_to_str_frac(lhs_val))
-            out.append("")
-            out.append(f"Lado derecho: {rhs_str}")
-            out.extend(rhs_steps)
-            out.append("Resultado derecho:")
-            out.append(Matrices._mat_to_str_frac(rhs_val))
-            out.append("")
+                        full_out.append(Matrices._mat_to_str_frac(col))
+                full_out.append("")
+            full_out.append(f"Lado izquierdo: {lhs_str}")
+            full_out.extend(lhs_steps)
+            full_out.append("Resultado izquierdo:")
+            full_out.append(Matrices._mat_to_str_frac(lhs_val))
+            full_out.append("")
+            full_out.append(f"Lado derecho: {rhs_str}")
+            full_out.extend(rhs_steps)
+            full_out.append("Resultado derecho:")
+            full_out.append(Matrices._mat_to_str_frac(rhs_val))
+            full_out.append("")
             iguales = Matrices.equal(lhs_val, rhs_val)
-            out.append(f"¿Se cumple la igualdad LHS = RHS? -> {'SI' if iguales else 'NO'}")
-            self.result_text.setPlainText("\n".join(out))
+            full_out.append(f"¿Se cumple la igualdad LHS = RHS? -> {'SI' if iguales else 'NO'}")
+
+            compact_out: list[str] = []
+            compact_out.append(f"Lado izquierdo ({lhs_str}):")
+            compact_out.append(Matrices._mat_to_str_frac(lhs_val))
+            compact_out.append("")
+            compact_out.append(f"Lado derecho ({rhs_str}):")
+            compact_out.append(Matrices._mat_to_str_frac(rhs_val))
+            compact_out.append("")
+            compact_out.append(f"¿Se cumple la igualdad LHS = RHS? -> {'SI' if iguales else 'NO'}")
+            self._store_and_render("\n".join(full_out), "\n".join(compact_out))
             # Ofrecer guardar resultados izquierdo y/o derecho con nombres sugeridos
             # Sugerencia: usar exactamente la fórmula de cada lado
             left_suggest = lhs_str
@@ -617,27 +695,28 @@ class OperacionesMatricesGui(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error al resolver ecuación", str(e))
             return
-        out: list[str] = []
         used_m = used.get('matrices', {})
         used_v = used.get('vectores', {})
+        full_out: list[str] = []
         if used_m or used_v:
-            out.append("Símbolos usados:")
+            full_out.append("Símbolos usados:")
             if used_m:
-                out.append("Matrices:")
+                full_out.append("Matrices:")
                 for nm in sorted(used_m.keys()):
-                    out.append(f"{nm}:")
-                    out.append(Matrices._mat_to_str_frac(used_m[nm]))
+                    full_out.append(f"{nm}:")
+                    full_out.append(Matrices._mat_to_str_frac(used_m[nm]))
             if used_v:
-                out.append("Vectores:")
+                full_out.append("Vectores:")
                 for nm in sorted(used_v.keys()):
-                    out.append(f"{nm}:")
+                    full_out.append(f"{nm}:")
                     col = [[v] for v in used_v[nm]]
-                    out.append(Matrices._mat_to_str_frac(col))
-            out.append("")
-        out.extend(pasos)
-        out.append("Resultado final de la expresión:")
-        out.append(Matrices._mat_to_str_frac(res))
-        self.result_text.setPlainText("\n".join(out))
+                    full_out.append(Matrices._mat_to_str_frac(col))
+            full_out.append("")
+        full_out.extend(pasos)
+        full_out.append("Resultado final de la expresión:")
+        full_out.append(Matrices._mat_to_str_frac(res))
+        compact_out = "Resultado final de la expresión:\n" + Matrices._mat_to_str_frac(res)
+        self._store_and_render("\n".join(full_out), compact_out)
         # Ofrecer guardado con nombre sugerido editable
         from re import sub
         suggest = "expr_result"
@@ -1019,7 +1098,9 @@ class OperacionesMatricesGui(QWidget):
         b = saved[b_name]
         try:
             res, pasos = Matrices.multiply_with_steps(a, b)
-            self.result_text.setPlainText("\n".join(pasos))
+            full_out = pasos + ["Resultado:", Matrices._mat_to_str_frac(res)]
+            compact_out = "Resultado:\n" + Matrices._mat_to_str_frac(res)
+            self._store_and_render("\n".join(full_out), compact_out)
             reply = QMessageBox.question(self, "Guardar resultado", f"¿Guardar resultado como '{a_name}_x_{b_name}'?",
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:
@@ -1065,15 +1146,21 @@ class OperacionesMatricesGui(QWidget):
         try:
             if op == "Multiplicar":
                 res, pasos = Matrices.multiply_with_steps(a, b)
-                self.result_text.setPlainText("\n".join(pasos))
+                full_out = pasos + ["Resultado:", Matrices._mat_to_str_frac(res)]
+                compact_out = "Resultado:\n" + Matrices._mat_to_str_frac(res)
+                self._store_and_render("\n".join(full_out), compact_out)
                 default_name = f"{a_name}_x_{b_name}"
             elif op == "Sumar":
                 res, pasos = Matrices.add_with_steps(a, b)
-                self.result_text.setPlainText("\n".join(pasos))
+                full_out = pasos + ["Resultado:", Matrices._mat_to_str_frac(res)]
+                compact_out = "Resultado:\n" + Matrices._mat_to_str_frac(res)
+                self._store_and_render("\n".join(full_out), compact_out)
                 default_name = f"{a_name}_plus_{b_name}"
             elif op == "Restar":
                 res, pasos = Matrices.subtract_with_steps(a, b)
-                self.result_text.setPlainText("\n".join(pasos))
+                full_out = pasos + ["Resultado:", Matrices._mat_to_str_frac(res)]
+                compact_out = "Resultado:\n" + Matrices._mat_to_str_frac(res)
+                self._store_and_render("\n".join(full_out), compact_out)
                 default_name = f"{a_name}_minus_{b_name}"
             elif op == "Calculo de inversa":
                 # Para invertir solo se usa A. Mostrar pasos de la reducción.
@@ -1083,7 +1170,9 @@ class OperacionesMatricesGui(QWidget):
                     QMessageBox.critical(self, "Error al calcular inversa", str(e))
                     return
                 # Mostrar todos los pasos y al final la inversa
-                self.result_text.setPlainText("\n".join(pasos))
+                full_out = pasos + ["Inversa:", Matrices._mat_to_str_frac(inv)]
+                compact_out = "Inversa:\n" + Matrices._mat_to_str_frac(inv)
+                self._store_and_render("\n".join(full_out), compact_out)
                 res = inv
                 default_name = f"{a_name}_inv"
             else:
@@ -1129,7 +1218,9 @@ class OperacionesMatricesGui(QWidget):
         a = saved[name]
         try:
             res, pasos = Matrices.multiply_scalar_with_steps(a, scalar)
-            self.result_text.setPlainText("\n".join(pasos))
+            full_out = pasos + ["Resultado:", Matrices._mat_to_str_frac(res)]
+            compact_out = "Resultado:\n" + Matrices._mat_to_str_frac(res)
+            self._store_and_render("\n".join(full_out), compact_out)
             scalar_label = format_val(scalar)
             # sanitizar sugerencia (no usar '/')
             scalar_fname = scalar_label.replace('/', '_')
@@ -1165,7 +1256,8 @@ class OperacionesMatricesGui(QWidget):
                     # registrar error y continuar con los demás
                     self.result_text.append(f"Error eliminando '{name}': {e}")
             self.reload_saved()
-            self.result_text.setPlainText(f"Matrices eliminadas:\n{lista_nombres}")
+            msg = f"Matrices eliminadas:\n{lista_nombres}"
+            self._store_and_render(msg, msg)
 
     def _toggle_list_item_at_pos(self, pos):
         """Toggle selection of the item under the given position (right-click toggle).
@@ -1200,7 +1292,8 @@ class OperacionesMatricesGui(QWidget):
             self.vectors_list.clear()
             for nm, vec in sorted(self.saved_vectors.items()):
                 self.vectors_list.addItem(f"{nm}  ({len(vec)})")
-            self.result_text.setPlainText(f"Vectores eliminados:\n{lista}")
+            msg = f"Vectores eliminados:\n{lista}"
+            self._store_and_render(msg, msg)
 
     def _toggle_vector_item_at_pos(self, pos):
         item = self.vectors_list.itemAt(pos)

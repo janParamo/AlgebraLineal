@@ -66,6 +66,42 @@ class Matrices:
             right = " ".join(format_val(aug[i][j]) for j in range(split, len(aug[i])))
             lines.append(f"[ {left} | {right} ]")
         return "\n".join(lines)
+
+    @staticmethod
+    def _mat_side_by_side_equal(lhs: List[List[float]], rhs: List[List[float]]) -> str:
+        """Devuelve un string con las dos matrices lado a lado separadas por '=' por fila.
+
+        Se usa para visualizar comparaciones A = B de manera compacta.
+        """
+        if not lhs or not rhs:
+            return ""
+        if len(lhs) != len(rhs) or len(lhs[0]) != len(rhs[0]):
+            # Formas distintas: se imprimen por separado.
+            l = Matrices._mat_to_str_frac(lhs)
+            r = Matrices._mat_to_str_frac(rhs)
+            return l + "\n=\n" + r
+        left_rows = ["[ " + " ".join(format_val(x) for x in row) + " ]" for row in lhs]
+        right_rows = ["[ " + " ".join(format_val(x) for x in row) + " ]" for row in rhs]
+        width = max(len(s) for s in left_rows) if left_rows else 0
+        lines = []
+        for i in range(len(left_rows)):
+            lines.append(left_rows[i].ljust(width) + "  =  " + right_rows[i])
+        return "\n".join(lines)
+
+    @staticmethod
+    def _identity_with_steps(n: int) -> Tuple[List[List[float]], List[str]]:
+        """Construye la identidad n×n y devuelve (I, pasos) con el cálculo por entrada."""
+        I = [[0.0 for _ in range(n)] for _ in range(n)]
+        pasos: List[str] = []
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    I[i][j] = 1.0
+                    pasos.append(f"I[{i+1},{j+1}] = 1 (i=j)")
+                else:
+                    I[i][j] = 0.0
+                    pasos.append(f"I[{i+1},{j+1}] = 0 (i≠j)")
+        return I, pasos
     @staticmethod
     def _validate_a_b(a: List[List[float]], b: List[List[float]]):
         if not isinstance(a, list) or not a or not isinstance(b, list) or not b:
@@ -255,6 +291,94 @@ class Matrices:
         # Mostrar en formato fracción para consistencia con el resto de la app
         pasos.append(Matrices._mat_to_str_frac(res))
         return res, pasos
+
+    @staticmethod
+    def determinant(a: List[List[float]]) -> float:
+        """Calcula el determinante de una matriz cuadrada usando eliminación con pivoteo parcial.
+
+        No normaliza la fila del pivote; el determinante es el producto de los pivotes,
+        ajustado por el signo de los intercambios de filas. Si encuentra un pivote ~0,
+        retorna 0.0 directamente.
+        """
+        if not a:
+            raise ValueError("La matriz no puede estar vacía.")
+        n = len(a)
+        m = len(a[0])
+        if any(len(row) != m for row in a) or n != m:
+            raise ValueError("El determinante solo está definido para matrices cuadradas.")
+        M = [[float(x) for x in row] for row in a]
+        det = 1.0
+        swaps = 0
+        for i in range(n):
+            # pivoteo parcial
+            pivot_row = max(range(i, n), key=lambda r: abs(M[r][i]))
+            if abs(M[pivot_row][i]) < EPS:
+                return 0.0
+            if pivot_row != i:
+                M[i], M[pivot_row] = M[pivot_row], M[i]
+                swaps += 1
+            piv = M[i][i]
+            det *= piv
+            # eliminación hacia abajo sin escalar la fila pivote
+            for r in range(i+1, n):
+                factor = M[r][i] / piv
+                for c in range(i, n):
+                    M[r][c] -= factor * M[i][c]
+        if swaps % 2 == 1:
+            det = -det
+        return det
+
+    @staticmethod
+    def determinant_with_steps(a: List[List[float]]) -> Tuple[float, List[str]]:
+        """Determinante con procedimiento paso a paso mediante eliminación con pivoteo parcial."""
+        if not a:
+            raise ValueError("La matriz no puede estar vacía.")
+        n = len(a)
+        m = len(a[0])
+        if any(len(row) != m for row in a) or n != m:
+            raise ValueError("El determinante solo está definido para matrices cuadradas.")
+        M = [[float(x) for x in row] for row in a]
+        pasos: List[str] = []
+        pivotes: List[float] = []
+        swaps = 0
+        for i in range(n):
+            pivot_row = max(range(i, n), key=lambda r: abs(M[r][i]))
+            pasos.append(f"Columna {i+1}: pivote elegido en fila {pivot_row+1} con valor {format_val(M[pivot_row][i])}")
+            if abs(M[pivot_row][i]) < EPS:
+                pasos.append("Pivote 0 -> det(A) = 0")
+                return 0.0, pasos
+            if pivot_row != i:
+                M[i], M[pivot_row] = M[pivot_row], M[i]
+                swaps += 1
+                pasos.append(f"Intercambio f{i+1} ↔ f{pivot_row+1} (cambia el signo del determinante)")
+                pasos.append("Estado tras intercambio:")
+                pasos.append(Matrices._mat_to_str_frac(M))
+            piv = M[i][i]
+            pivotes.append(piv)
+            pasos.append(f"Pivote p{i+1} = {format_val(piv)}")
+            for r in range(i+1, n):
+                factor = M[r][i] / piv
+                if abs(M[r][i]) > EPS:
+                    pasos.append(f"f{r+1} -> f{r+1} - ({format_val(factor)})*f{i+1}")
+                for c in range(i, n):
+                    M[r][c] -= factor * M[i][c]
+                if abs(M[r][i]) > EPS:
+                    pasos.append(Matrices._mat_to_str_frac(M))
+        # Mostrar la triangular superior final y su diagonal
+        pasos.append("Matriz triangular superior final:")
+        pasos.append(Matrices._mat_to_str_frac(M))
+        pasos.append("Diagonal de la triangular: [" + ", ".join(format_val(M[i][i]) for i in range(n)) + "]")
+        # producto de pivotes y signo por swaps
+        prod = 1.0
+        for p in pivotes:
+            prod *= p
+        signo = -1.0 if (swaps % 2 == 1) else 1.0
+        det = signo * prod
+        pasos.append("Producto de pivotes: " + " * ".join(format_val(p) for p in pivotes) + f" = {format_val(prod)}")
+        pasos.append(f"Intercambios de filas: {swaps} -> factor signo = {'-1' if signo < 0 else '+1'}")
+        pasos.append("En una matriz triangular superior, det(A) es el producto de su diagonal, ajustado por el signo de los intercambios.")
+        pasos.append(f"det(A) = {format_val(signo)} * {format_val(prod)} = {format_val(det)}")
+        return det, pasos
 
     @staticmethod
     def transpose(a: List[List[float]]) -> List[List[float]]:
@@ -607,35 +731,62 @@ class Matrices:
         
         # Verificaciones finales
         pasos.append("\nVerificaciones de invertibilidad:")
-        # 1) Comprobar A * A^{-1} = I
+        # Preparar identidad del mismo tamaño que A (n)
+        I = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+
+        # 1) Comprobar A * A^{-1} = I, mostrando cómo se construye I y comparando explícitamente
         try:
             prod = Matrices.multiply(a, inv)
             is_I = Matrices._is_identity(prod)
             estado = "CUMPLE" if is_I else "NO CUMPLE"
-            pasos.append(f"1) A·A^{-1} = I  -> {estado}")
+            pasos.append("1) A·A^{-1} = I")
             pasos.append("Producto A·A^{-1}:")
             pasos.append(Matrices._mat_to_str_frac(prod))
-        except Exception as e:
-            pasos.append(f"1) A·A^{-1} = I  -> NO VERIFICADO ({e})")
 
-        # 1b) Comprobar A^{-1} * A = I (ambos sentidos, como en la definición)
-        try:
-            prod2 = Matrices.multiply(inv, a)
-            is_I2 = Matrices._is_identity(prod2)
-            estado2 = "CUMPLE" if is_I2 else "NO CUMPLE"
-            pasos.append(f"1b) A^{-1}·A = I -> {estado2}")
-            pasos.append("Producto A^{-1}·A:")
-            pasos.append(Matrices._mat_to_str_frac(prod2))
+            # Construcción explícita de la identidad I indicando tamaño
+            pasos.append(f"Construcción de la identidad I (número de filas/columnas, n = {n}):")
+            pasos.append("Regla: I[i,j] = 1 si i=j; 0 en otro caso.")
+            # Mostrar procedimiento de construcción por entrada
+            I_calc, pasos_I = Matrices._identity_with_steps(n)
+            pasos.extend(pasos_I)
+            pasos.append("Resultado I:")
+            pasos.append(Matrices._mat_to_str_frac(I_calc))
+
+            # Comparación compacta mostrando el '=' entre ambas matrices
+            pasos.append("Comparación explícita A·A^{-1} = I:")
+            pasos.append(Matrices._mat_side_by_side_equal(prod, I_calc))
+            pasos.append(f"Veredicto: {estado}")
         except Exception as e:
-            pasos.append(f"1b) A^{-1}·A = I -> NO VERIFICADO ({e})")
+            pasos.append(f"1) A·A^{-1} = I  -> No hay igualdad  ({e})")
 
         # 2) (c) A tiene n posiciones pivote
-        pasos.append(f"2) (c) A tiene n posiciones pivote -> {'CUMPLE' if len(pivot_positions)==n else 'NO CUMPLE'}; pivotes: "
-                     + ", ".join(f"(f{r+1},c{c+1})" for r,c in pivot_positions))
-        # 3) (d) Ax=0 solo tiene la solución trivial (equivalente a invertible)
-        pasos.append("3) (d) Ax = 0 solo tiene la solución trivial -> CUMPLE (A es invertible)")
-        # 4) (e) Columnas de A son L.I. (equivalente a invertible)
-        pasos.append("4) (e) Las columnas de A forman un conjunto L.I. -> CUMPLE (A es invertible)")
-        # 5) singularidad
-        pasos.append("5) Singularidad: matriz no singular (invertible)")
+        cumple_pivotes = (len(pivot_positions) == n)
+        pasos.append(
+            f"2) (c) A tiene n posiciones pivote -> "
+            f"{'Cumple (A es una matriz invertible)' if cumple_pivotes else 'No Cumple (A no es una matriz invertible)'}; "
+            + "pivotes: " + ", ".join(f"(f{r+1},c{c+1})" for r,c in pivot_positions)
+        )
+        # 3) (d) Ax=0 solo tiene la solución trivial
+        pasos.append(
+            f"3) (d) Ax = 0 solo tiene la solución trivial -> "
+            f"{'Cumple (A^-1 existe)' if cumple_pivotes else 'No Cumple (A^-1 no existe)'}"
+        )
+        # 4) (e) Columnas de A son L.I.
+        pasos.append(
+            f"4) (e) Las columnas de A forman un conjunto L.I. -> "
+            f"{'Cumple (A es una matriz invertible)' if cumple_pivotes else 'No Cumple (A no es una matriz invertible)'}"
+        )
+        # 5) Singularidad (con determinante y procedimiento)
+        try:
+            detA, pasos_det = Matrices.determinant_with_steps(a)
+            pasos.append("5) Singularidad (por determinante):")
+            pasos.append("Procedimiento del determinante:")
+            pasos.extend(pasos_det)
+            pasos.append(f"Valor final: det(A) = {format_val(detA)}")
+            if abs(detA) < 1e-10:
+                pasos.append("Veredicto: No Cumple (A es singular; A no es una matriz invertible)")
+            else:
+                pasos.append("Veredicto: Cumple (A no es singular; A es una matriz invertible)")
+        except Exception as e:
+            pasos.append(f"5) Singularidad (por determinante): NO EVALUADA ({e})")
         return inv, pasos
