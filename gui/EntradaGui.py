@@ -68,7 +68,7 @@ class EntradaGui(QWidget):
         self.nombres = [
             "Allan Acuña",
             "Joshua Ordoñez",
-            "Jan Paramo",
+            "Jan Páramo",
             "Guillermo Vega"
         ]
         self.labels_nombres = []
